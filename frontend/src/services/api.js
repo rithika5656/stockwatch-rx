@@ -5,6 +5,12 @@ const api = axios.create({
   timeout: 15000,
 })
 
+api.interceptors.request.use((config) => {
+  const token = window.localStorage.getItem('stockwatch_session')
+  if (token) config.headers.Authorization = `Bearer ${token}`
+  return config
+})
+
 export async function get(path, params) {
   const response = await api.get(path, { params })
   return response.data.data

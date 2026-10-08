@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, AlertTriangle, ArrowRight, ArrowUpRight, Bell, Boxes, Building2, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download, Droplets, FileBarChart2, Gauge, HeartPulse, LayoutDashboard, Menu, PackageSearch, Search, ShieldAlert, Sparkles, Truck, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, ArrowUpRight, Bell, Boxes, Building2, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download, Droplets, FileBarChart2, Gauge, HeartPulse, LayoutDashboard, LogOut, Menu, PackageSearch, Search, ShieldAlert, Sparkles, Truck, X } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
 import { get, getErrorMessage, post } from './services/api'
 import NetworkFlow from './components/NetworkFlow.jsx'
@@ -26,13 +26,38 @@ function useApiData(path, refresh = 0, params = {}) {
   return state
 }
 
+function LoginScreen({ onLogin }) {
+  const [hospitalId, setHospitalId] = useState('H001')
+  const [password, setPassword] = useState('demo123')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  async function submit(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const session = await post('/auth/login', { hospital_id: hospitalId, password })
+      window.localStorage.setItem('stockwatch_session', session.access_token)
+      window.localStorage.setItem('stockwatch_user', JSON.stringify(session.user))
+      onLogin(session.user)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <main className="login-screen"><div className="login-grid" /><section className="login-panel"><div className="login-brand"><div className="brand-mark"><HeartPulse size={22} /></div><div><strong>StockWatch-RX</strong><small>COIMBATORE SUPPLY INTELLIGENCE</small></div></div><p className="eyebrow">// HOSPITAL ACCESS</p><h1>Know before<br /><span>the shortage.</span></h1><p className="login-description">Sign in to view your hospital's inventory, forecast signals and nearby eligible supply.</p><form onSubmit={submit}><label>Hospital ID<select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)}><option value="H001">H001 · Coimbatore Central Hospital</option><option value="H002">H002 · Coimbatore Emergency Medical Center</option><option value="H003">H003 · Coimbatore Regional Hospital</option></select></label><label>Demo password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}<button className="button button-primary login-button" disabled={busy}>{busy ? 'Signing in...' : 'Enter hospital workspace'}<ArrowRight size={16} /></button></form><div className="login-footer"><span>DEMO MODE</span><span>3 Coimbatore facilities</span></div></section></main>
+}
+
 function Shell() {
   const location = useLocation()
+  const [authUser, setAuthUser] = useState(() => JSON.parse(window.localStorage.getItem('stockwatch_user') || 'null'))
   const [collapsed, setCollapsed] = useState(false)
   const [mobile, setMobile] = useState(false)
   const [scenario, setScenario] = useState('outbreak')
   const [scenarioLabel, setScenarioLabel] = useState('Outbreak surge')
   const [refresh, setRefresh] = useState(0)
+  if (!authUser) return <LoginScreen onLogin={setAuthUser} />
   useEffect(() => { get('/demo/scenario').then((item) => { setScenario(item.key); setScenarioLabel(item.label) }).catch(() => {}) }, [])
   async function selectScenario(event) {
     try { const item = await post('/demo/scenario', { scenario: event.target.value }); setScenario(item.key); setScenarioLabel(item.label); setRefresh((current) => current + 1) }
@@ -41,13 +66,13 @@ function Shell() {
   return <div className={`app-shell ${collapsed ? 'sidebar-collapsed' : ''}`}>
     <aside className={`sidebar ${mobile ? 'mobile-open' : ''}`}>
       <div className="brand-lockup"><div className="brand-mark"><HeartPulse size={20} /></div><div className="brand-copy"><strong>StockWatch-RX</strong><small>MEDICAL SUPPLY INTELLIGENCE</small></div><button className="mobile-close icon-button" aria-label="Close menu" onClick={() => setMobile(false)}><X size={18} /></button></div>
-      <div className="workspace-chip"><div className="workspace-avatar">TN</div><div><strong>South region</strong><small>20 facilities</small></div><ChevronDown size={15} /></div>
+      <div className="workspace-chip"><div className="workspace-avatar">{authUser.hospital_id}</div><div><strong>Coimbatore</strong><small>{authUser.hospital_name}</small></div></div>
       <nav>{groups.map(([group, links]) => <div className="nav-group" key={group}><div className="nav-group-label">{group}</div>{links.map(([path, label, Icon]) => <NavLink key={path} to={path} onClick={() => setMobile(false)} className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`} title={collapsed ? label : undefined}><Icon size={18} /><span>{label}</span></NavLink>)}</div>)}</nav>
-      <div className="sidebar-bottom"><div className="sidebar-status"><i className="status-dot" /><div><strong>System operational</strong><small>Demo data connected</small></div></div><div className="demo-label">DEMO MODE <i /></div><button className="collapse-button" onClick={() => setCollapsed((value) => !value)}><ChevronLeft size={16} /><span>Collapse menu</span></button></div>
+      <div className="sidebar-bottom"><div className="sidebar-status"><i className="status-dot" /><div><strong>{authUser.hospital_id} · Operational</strong><small>Hospital session active</small></div></div><div className="demo-label">DEMO MODE <i /></div><button className="collapse-button" onClick={() => { window.localStorage.removeItem('stockwatch_session'); window.localStorage.removeItem('stockwatch_user'); setAuthUser(null) }}><LogOut size={15} /><span>Sign out</span></button></div>
     </aside>
     {mobile && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setMobile(false)} />}
     <div className="main-column"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobile(true)}><Menu size={20} /></button><div className="breadcrumb"><span>STOCKWATCH-RX</span><ChevronRight size={14} /><strong>{titles[location.pathname] || titles['/dashboard']}</strong></div><div className="topbar-actions"><label className="scenario-select"><span>DEMO SCENARIO</span><select value={scenario} onChange={selectScenario} aria-label="Choose demo scenario"><option value="normal">Normal operations</option><option value="outbreak">Outbreak surge</option><option value="critical">Critical shortage</option><option value="expiry">Expiry crisis</option><option value="redistribution">Redistribution opportunity</option></select><ChevronDown size={14} /></label><span className="header-status"><i className="status-dot" />Operational</span><button className="icon-button notification-button" aria-label="Notifications"><Bell size={18} /><i /></button><div className="user-avatar">DR</div></div></header>
-      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local supply teams</span></footer></main>
+      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local teams</span></footer></main>
     </div>
   </div>
 }
@@ -55,14 +80,14 @@ function Shell() {
 function Heading({ title, description, action }) { return <div className="page-heading"><div><p className="eyebrow">{title === 'Supply intelligence' ? 'NETWORK CONTROL CENTER' : 'OPERATIONS'}</p><h1>{title}</h1><p className="heading-description">{description}</p></div>{action}</div> }
 function PanelHeading({ title, eyebrow, action }) { return <div className="panel-heading"><div><span>{eyebrow}</span><h2>{title}</h2></div>{action}</div> }
 
-function DashboardHero({ data, scenarioLabel }) {
+function DashboardHero({ data, scenarioLabel, authUser }) {
   const lead = data.critical_supplies.find((item) => item.risk_level === 'CRITICAL') || data.critical_supplies[0]
   return <section className="dashboard-hero">
     <div className="hero-copy">
       <div className="hero-overline"><span>// INTELLIGENCE CONTROL CENTER</span><span>01 / SUPPLY NETWORK</span></div>
       <h1>MEDICAL SUPPLY<br /><span>INTELLIGENCE</span></h1>
       <p className="hero-tagline">Know Before the Shortage.</p>
-      <p className="hero-description">AI-powered forecasting, risk detection and intelligent redistribution for healthcare supply networks.</p>
+      <p className="hero-description">AI-powered forecasting, risk detection and intelligent redistribution for {authUser?.hospital_name || 'your hospital'}.</p>
       <div className="hero-signals"><span><i className="status-dot" />AI NETWORK ONLINE</span><span>SCENARIO / {scenarioLabel.toUpperCase()}</span><span>LAST UPDATED / {data.updated_at}</span></div>
     </div>
     <aside className="hero-focus"><div className="hero-focus-label"><span>ACTIVE RISK SIGNAL</span><Badge value={lead?.risk_level || 'LOW'} /></div><strong className="hero-focus-days">{lead?.days_until_stockout ?? '--'}<small>DAYS</small></strong><span className="hero-focus-event">SAFETY STOCK BREACH WINDOW</span><span className="hero-focus-name">{lead?.hospital || 'No facility flagged'}</span><span className="hero-focus-supply">{lead?.supply || 'Supply network stable'}</span><div className="hero-focus-footer"><span>{data.kpis.critical_shortages.toString().padStart(2, '0')} CRITICAL SIGNALS</span><span>SIMULATED FORECAST</span></div></aside>
@@ -70,16 +95,16 @@ function DashboardHero({ data, scenarioLabel }) {
   </section>
 }
 
-function Dashboard({ refresh, scenarioLabel }) {
+function Dashboard({ refresh, scenarioLabel, authUser }) {
   const { data, loading, error } = useApiData('/dashboard/summary', refresh)
   if (loading && !data) return <Loading />
   if (error) return <Error message={error} />
-  const metrics = [['Hospitals monitored', data.kpis.hospitals, 'Across the network', Building2, 'green'], ['Medical supplies', data.kpis.supplies, 'Active catalogue', Boxes, 'teal'], ['Critical shortages', data.kpis.critical_shortages, 'Require attention', AlertTriangle, 'red'], ['Expiry exposures', data.kpis.expiry_risks, `${data.kpis.stock_at_risk.toLocaleString()} units at risk`, CalendarClock, 'amber'], ['Transfer actions', data.kpis.recommended_transfers, 'Safety constrained', Truck, 'blue']]
+  const metrics = [['Current inventory', data.kpis.current_inventory_units, 'Usable units at this hospital', Boxes, 'green'], ['Critical supplies', data.kpis.critical_supplies_count, 'Require attention', AlertTriangle, 'red'], ['Forecast alerts', data.kpis.forecast_alerts, 'Local demand signals', Activity, 'teal'], ['Expiry risks', data.kpis.expiry_risks, `${data.kpis.stock_at_risk.toLocaleString()} units at risk`, CalendarClock, 'amber'], ['Nearby surplus', data.kpis.nearby_surplus_hospitals, 'Eligible local sources', Truck, 'blue']]
   const totalRisk = Object.values(data.risk_counts).reduce((sum, count) => sum + count, 0)
-  return <><DashboardHero data={data} scenarioLabel={scenarioLabel} />
+  return <><DashboardHero data={data} scenarioLabel={scenarioLabel} authUser={authUser} />
     <div className="scenario-banner"><div className="scenario-icon"><Activity size={18} /></div><div><strong>{scenarioLabel}</strong><span>Scenario active · Forecasts and recommendations reflect this selection</span></div><span className="banner-tag">DEMO SIGNAL</span></div>
     <section className="kpi-grid">{metrics.map(([label, value, note, Icon, tone]) => <article className="kpi-card" key={label}><div className={`kpi-icon ${tone}`}><Icon size={18} /></div><div className="kpi-label">{label}</div><div className="kpi-value">{value.toLocaleString()}</div><div className="kpi-note">{note}</div></article>)}</section>
-    <div className="dashboard-grid"><section className="panel demand-panel"><PanelHeading title="Demand signal" eyebrow="H003 · NORMAL SALINE 500ML" action={<span className="chart-legend"><i className="legend-historical" />History <i className="legend-forecast" />Forecast</span>} /><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.demand_chart} margin={{ top: 10, right: 12, left: -18, bottom: 0 }}><defs><linearGradient id="demandFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#167966" stopOpacity={0.2} /><stop offset="95%" stopColor="#167966" stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eeec" /><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} interval={5} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} /><Tooltip /><Area dataKey="historical" type="monotone" stroke="#167966" strokeWidth={2} fill="url(#demandFill)" connectNulls name="Historical" /><Line dataKey="forecast" type="monotone" stroke="#dc8b37" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls name="Forecast" /></AreaChart></ResponsiveContainer></div><div className="chart-footnote"><span><ArrowUpRight size={14} />7-day weighted demand baseline</span><span>Forecast confidence: moderate</span></div></section>
+    <div className="dashboard-grid"><section className="panel demand-panel"><PanelHeading title="Demand signal" eyebrow={`${authUser?.hospital_id || 'H001'} · NORMAL SALINE 500ML`} action={<span className="chart-legend"><i className="legend-historical" />History <i className="legend-forecast" />Forecast</span>} /><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.demand_chart} margin={{ top: 10, right: 12, left: -18, bottom: 0 }}><defs><linearGradient id="demandFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#167966" stopOpacity={0.2} /><stop offset="95%" stopColor="#167966" stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eeec" /><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} interval={5} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} /><Tooltip /><Area dataKey="historical" type="monotone" stroke="#167966" strokeWidth={2} fill="url(#demandFill)" connectNulls name="Historical" /><Line dataKey="forecast" type="monotone" stroke="#dc8b37" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls name="Forecast" /></AreaChart></ResponsiveContainer></div><div className="chart-footnote"><span><ArrowUpRight size={14} />7-day weighted demand baseline</span><span>Forecast confidence: moderate</span></div></section>
       <section className="panel risk-panel"><PanelHeading title="Network risk mix" eyebrow="SHORTAGE EXPOSURE" action={<NavLink className="text-link" to="/shortages">View all <ArrowRight size={14} /></NavLink>} /><div className="risk-total"><strong>{totalRisk}</strong><span>hospital-supply pairs<br />requiring review</span></div><div className="risk-stacks">{Object.entries(data.risk_counts).map(([risk, count]) => <div className={`risk-stack ${risk.toLowerCase()}`} key={risk}><div className="risk-stack-top"><span><i />{risk}</span><strong>{count}</strong></div><div className="risk-track"><i style={{ width: `${Math.max(4, count / Math.max(1, totalRisk) * 100)}%` }} /></div></div>)}</div><div className="risk-insight"><ShieldAlert size={16} /><span><strong>{data.risk_counts.CRITICAL} critical signals</strong> need near-term action</span></div></section></div>
     <div className="dashboard-grid"><section className="panel table-panel"><PanelHeading title="Recommended transfers" eyebrow="OPTIMISED ACTIONS" action={<NavLink className="text-link" to="/redistribution">Open queue <ArrowRight size={14} /></NavLink>} />{data.transfers.slice(0, 4).map((item) => <TransferRow item={item} key={item.recommendation_id} compact />)}</section><section className="panel table-panel"><PanelHeading title="Expiry watch" eyebrow="WASTE PREVENTION" action={<NavLink className="text-link" to="/expiry-risk">View queue <ArrowRight size={14} /></NavLink>} />{data.expiry_risks.slice(0, 5).map((item) => <div className="expiry-row" key={item.batch_id}><div className="expiry-date"><strong>{item.days_until_expiry}</strong><small>DAYS</small></div><div className="expiry-info"><strong>{item.supply}</strong><span>{item.hospital} · {item.batch_id}</span></div><div className="expiry-units"><strong>{item.expected_waste.toLocaleString()}</strong><small>units exposed</small></div></div>)}</section></div>
     <div className="dashboard-grid"><section className="panel table-panel"><PanelHeading title="Facilities to watch" eyebrow="HOSPITAL SUPPLY HEALTH" action={<NavLink className="text-link" to="/hospitals">All hospitals <ArrowRight size={14} /></NavLink>} />{data.critical_hospitals.map((hospital) => <div className="facility-row" key={hospital.hospital_id}><div className="facility-pin"><Building2 size={15} /></div><div className="facility-info"><strong>{hospital.name}</strong><span>{hospital.city} · {hospital.critical_shortages} critical · {hospital.shortage_count} at risk</span></div><Health score={hospital.supply_health_score} /></div>)}</section><section className="panel priority-callout"><div className="callout-top"><div className="callout-icon"><Gauge size={18} /></div><span>PRIORITY ALLOCATION</span><ArrowUpRight size={16} /></div><h2>Make limited stock count.</h2><p>Urgency, emergency load, patient occupancy, and supply criticality are scored transparently.</p><NavLink to="/prioritisation" className="callout-link">Review allocation ranking <ArrowRight size={15} /></NavLink><div className="callout-metric"><strong>{data.critical_supplies[0]?.priority_score ?? 0}</strong><span>Highest priority score<br />out of 100</span></div></section></div>
@@ -107,7 +132,7 @@ function Inventory({ refresh }) {
 function Forecast({ refresh }) {
   const hospitals = useApiData('/hospitals', refresh).data || []
   const supplies = useApiData('/supplies', refresh).data || []
-  const [hospital, setHospital] = useState('H003')
+  const [hospital, setHospital] = useState('H001')
   const [supply, setSupply] = useState('MED001')
   const [horizon, setHorizon] = useState('14')
   const { data, loading, error } = useApiData('/forecast', refresh, { hospital_id: hospital, supply_id: supply, horizon_days: Number(horizon) })
@@ -137,7 +162,7 @@ function Assistant() {
   const [messages, setMessages] = useState([{ role: 'assistant', text: 'I can query current shortage exposure, expiry risk, inventory totals, and recommended transfers. What would you like to know?' }])
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
-  const prompts = ['Which hospitals may face shortages next week?', 'Which supplies have the highest expiry risk?', 'Why transfer saline from Hospital A to Hospital C?', 'How many units of saline are available?']
+  const prompts = ['Which supplies are at highest risk at my hospital?', 'Which local batches expire soon?', 'Why should H002 transfer saline to H001?', 'What happens if demand increases by 20%?']
   async function ask(value = question) { const text = value.trim(); if (!text || busy) return; setMessages((items) => [...items, { role: 'user', text }]); setQuestion(''); setBusy(true); try { const result = await post('/assistant/query', { question: text }); setMessages((items) => [...items, { role: 'assistant', text: result.answer, sources: result.sources }]) } catch (error) { setMessages((items) => [...items, { role: 'assistant', text: getErrorMessage(error) }]) } finally { setBusy(false) } }
   return <><Heading title="MediSupply Copilot" description="Natural-language answers grounded in current backend analysis." action={<span className="demo-ai-badge"><Sparkles size={14} />DEMO AI MODE</span>} /><section className="assistant-layout"><div className="panel chat-panel"><div className="chat-header"><div className="chat-avatar"><Sparkles size={18} /></div><div><strong>MediSupply Copilot</strong><span><i className="status-dot" />Connected to demo data</span></div><span className="mode-pill">RULE-BASED</span></div><div className="chat-messages">{messages.map((item, index) => <div className={`chat-message ${item.role}`} key={index}><div className="message-avatar">{item.role === 'assistant' ? <Sparkles size={15} /> : 'DR'}</div><div className="message-body"><p>{item.text}</p>{item.sources && <small>Data sources: {item.sources.map((source) => source.tool.replaceAll('_', ' ')).join(' · ')}</small>}</div></div>)}{busy && <div className="chat-thinking">Checking current supply signals...</div>}</div><form className="chat-compose" onSubmit={(event) => { event.preventDefault(); ask() }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about shortages, expiry, or transfers..." /><button disabled={!question.trim() || busy} aria-label="Send"><ArrowRight size={18} /></button></form><div className="chat-disclaimer">Synthetic demo data · Validate decisions with local teams</div></div><aside className="panel prompt-panel"><span className="eyebrow">SUGGESTED QUESTIONS</span><h2>Explore the network</h2>{prompts.map((prompt) => <button className="suggestion-button" key={prompt} onClick={() => ask(prompt)}>{prompt}<ArrowUpRight size={14} /></button>)}</aside></section></>
 }

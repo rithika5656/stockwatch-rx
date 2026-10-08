@@ -17,6 +17,7 @@ if not 0 <= RISK_THRESHOLDS["critical_days"] < RISK_THRESHOLDS["high_days"] < RI
 SIMULATION_DAYS = 365
 PRIORITY_WEIGHTS = {"emergency_demand": 0.35, "patient_load": 0.25, "stockout_urgency": 0.20, "alternative_availability": 0.10, "supply_criticality": 0.10}
 REDISTRIBUTION_WEIGHTS = {"shortage_urgency": 0.30, "stockout_probability": 0.20, "demand_pressure": 0.10, "emergency_load": 0.10, "supply_criticality": 0.15, "expiry_urgency": 0.10, "transport_feasibility": 0.05}
+LOCAL_RADIUS_KM = float(os.getenv("LOCAL_REDISTRIBUTION_RADIUS_KM", "15"))
 
 
 def _risk(days: float, probability: float) -> str:
@@ -280,6 +281,8 @@ def _recommend_transfers(forecasts: list[dict[str, Any]], stock: dict[tuple[str,
                 source_hospital = hospitals[source["hospital_id"]]
                 destination_hospital = hospitals[destination["hospital_id"]]
                 distance = _distance_km(source_hospital, destination_hospital)
+                if distance > LOCAL_RADIUS_KM:
+                    continue
                 transport_hours = round(max(2, distance / 55 + 1.5), 1)
                 transport_days = transport_hours / 24
                 if transport_days >= max(0.25, destination["days_until_zero_stock"]):
@@ -355,6 +358,7 @@ def _recommend_transfers(forecasts: list[dict[str, Any]], stock: dict[tuple[str,
                     "priority_score": score, "score_components": score_components, "score_penalties": penalties,
                     "priority": "CRITICAL" if score >= 80 else "HIGH" if score >= 60 else "MEDIUM",
                     "reason": reason, "estimated_transport_hours": transport_hours,
+                    "distance_km": round(distance, 2), "local_radius_km": LOCAL_RADIUS_KM,
                     "source_stock_before": stock[source_key], "source_remaining_stock": source_after,
                     "source_safety_stock": safety[source_key], "source_reserve": round(source_reserve),
                     "destination_stock_before": destination["current_stock"], "destination_stock_after": destination_after,

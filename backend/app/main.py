@@ -4,13 +4,15 @@ from collections import Counter, defaultdict
 from datetime import date, timedelta
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from . import database
+from .auth_service import login as login_user, user_from_token
 from .assistant_service import get_assistant_provider
 from .engine import RISK_ORDER, analyze
+from .engine import LOCAL_RADIUS_KM
 
 app = FastAPI(title="MediSupplyIQ API", version="1.0.0", description="Synthetic medical supply decision-support prototype")
 app.add_middleware(
@@ -32,6 +34,11 @@ scenario_key = "outbreak"
 action_status: dict[str, str] = {}
 _cached_data_id: int | None = None
 _cached_analysis: dict[str, Any] | None = None
+
+
+class LoginRequest(BaseModel):
+    hospital_id: str
+    password: str
 
 
 class AssistantQuery(BaseModel):
@@ -65,6 +72,32 @@ def get_analysis() -> dict[str, Any]:
     return _cached_analysis
 
 
+def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+    try:
+        return user_from_token(authorization)
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+
+def scoped_analysis(user: dict[str, Any]) -> dict[str, Any]:
+    analysis = get_analysis()
+    hospital_id = user["hospital_id"]
+    if user.get("role") == "network_admin":
+        return analysis
+    scoped = dict(analysis)
+    scoped["forecasts"] = [row for row in analysis["forecasts"] if row["hospital_id"] == hospital_id]
+    scoped["shortages"] = [row for row in analysis["shortages"] if row["hospital_id"] == hospital_id]
+    scoped["expiry_risks"] = [row for row in analysis["expiry_risks"] if row["hospital_id"] == hospital_id]
+    scoped["priorities"] = [row for row in analysis["priorities"] if row["hospital_id"] == hospital_id]
+    scoped["transfers"] = [row for row in analysis["transfers"] if row["destination_hospital_id"] == hospital_id]
+    scoped["inventory_totals"] = {key: value for key, value in analysis["inventory_totals"].items() if key[0] == hospital_id}
+    scoped["safety_totals"] = {key: value for key, value in analysis["safety_totals"].items() if key[0] == hospital_id}
+    scoped["hospitals"] = {hospital_id: analysis["hospitals"][hospital_id]}
+    scoped["history_points"] = {key: value for key, value in analysis["history_points"].items() if key[0] == hospital_id}
+    scoped["batches"] = {key: value for key, value in analysis["batches"].items() if key[0] == hospital_id}
+    return scoped
+
+
 def _risk_for(analysis: dict[str, Any], hospital_id: str, supply_id: str) -> str:
     row = next((item for item in analysis["forecasts"] if item["hospital_id"] == hospital_id and item["supply_id"] == supply_id), None)
     return row["risk_level"] if row else "LOW"
@@ -94,7 +127,8 @@ def _inventory_rows(analysis: dict[str, Any]) -> list[dict[str, Any]]:
     for item in analysis["expiry_risks"]:
         expiry[(item["hospital_id"], item["supply_id"])].append(item)
     result = []
-    for batch in database.ACTIVE_DATA["inventory"]:
+    batches = [batch for batch_list in analysis["batches"].values() for batch in batch_list]
+    for batch in batches:
         hospital = analysis["hospitals"][batch["hospital_id"]]
         supply = analysis["supplies"][batch["supply_id"]]
         forecast = forecasts[(batch["hospital_id"], batch["supply_id"])]
@@ -138,6 +172,19 @@ def _scenario_response() -> dict[str, Any]:
     return {"key": scenario_key, "label": SCENARIOS[scenario_key], "options": [{"key": key, "label": label} for key, label in SCENARIOS.items()]}
 
 
+@app.post("/api/auth/login")
+def auth_login(payload: LoginRequest) -> dict[str, Any]:
+    result = login_user(payload.hospital_id, payload.password)
+    if not result:
+        raise HTTPException(status_code=401, detail="Invalid hospital ID or demo password")
+    return envelope(result)
+
+
+@app.get("/api/auth/me")
+def auth_me(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    return envelope(user)
+
+
 @app.on_event("startup")
 def startup() -> None:
     global _cached_data_id, _cached_analysis
@@ -173,14 +220,15 @@ def change_scenario(payload: ScenarioChange) -> dict[str, Any]:
 
 
 @app.get("/api/dashboard/summary")
-def dashboard_summary() -> dict[str, Any]:
-    analysis = get_analysis()
+def dashboard_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    analysis = scoped_analysis(user)
     hospitals = _hospital_summary(analysis)
     critical = [item for item in analysis["shortages"] if item["risk_level"] == "CRITICAL"]
     risk_counts = Counter(item["risk_level"] for item in analysis["shortages"])
     expiry = sorted(analysis["expiry_risks"], key=lambda item: (item["days_until_expiry"], -item["expected_waste"]))
-    demand_values = analysis["history_points"].get(("H003", "MED001"), [])[-30:]
-    demand_forecast = next((item for item in analysis["forecasts"] if item["hospital_id"] == "H003" and item["supply_id"] == "MED001"), None)
+    target_hospital = user["hospital_id"]
+    demand_values = analysis["history_points"].get((target_hospital, "MED001"), [])[-30:]
+    demand_forecast = next((item for item in analysis["forecasts"] if item["hospital_id"] == target_hospital and item["supply_id"] == "MED001"), None)
     demand_chart = []
     for index, value in enumerate(demand_values):
         demand_chart.append({"day": (date.today() - timedelta(days=len(demand_values) - index - 1)).strftime("%d %b"), "historical": round(value, 1), "forecast": None})
@@ -195,6 +243,10 @@ def dashboard_summary() -> dict[str, Any]:
             "critical_shortages": len(critical), "expiry_risks": len(analysis["expiry_risks"]),
             "recommended_transfers": len(analysis["transfers"]),
             "stock_at_risk": sum(item["expected_waste"] for item in analysis["expiry_risks"]),
+            "current_inventory_units": sum(analysis["inventory_totals"].values()),
+            "critical_supplies_count": len({item["supply_id"] for item in critical}),
+            "forecast_alerts": len(analysis["shortages"]),
+            "nearby_surplus_hospitals": len({item["source_hospital_id"] for item in analysis["transfers"]}),
         },
         "risk_counts": {level: risk_counts.get(level, 0) for level in ("CRITICAL", "HIGH", "MEDIUM", "LOW")},
         "hospital_risk": hospital_risk,
@@ -203,13 +255,14 @@ def dashboard_summary() -> dict[str, Any]:
         "expiry_risks": expiry[:7],
         "transfers": analysis["transfers"][:6],
         "critical_hospitals": sorted(hospitals, key=lambda item: item["supply_health_score"])[:6],
-        "scenario": _scenario_response(), "updated_at": date.today().isoformat(),
+        "scenario": _scenario_response(), "hospital": next(iter(analysis["hospitals"].values()), None),
+        "local_radius_km": LOCAL_RADIUS_KM, "updated_at": date.today().isoformat(),
     }
     return envelope(response)
 
 
 @app.get("/api/network")
-def network_summary() -> dict[str, Any]:
+def network_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     analysis = get_analysis()
     expiry_by_hospital: dict[str, int] = defaultdict(int)
     for item in analysis["expiry_risks"]:
@@ -249,19 +302,44 @@ def network_summary() -> dict[str, Any]:
         "destination_hospital_id": item["destination_hospital_id"], "destination": item["destination_hospital"],
         "supply": item["supply"], "quantity": item["recommended_quantity"],
         "transport_hours": item["estimated_transport_hours"], "priority_score": item["priority_score"],
-    } for item in analysis["transfers"][:20]]
+    } for item in analysis["transfers"] if user.get("role") == "network_admin" or item["destination_hospital_id"] == user["hospital_id"]][:20]
     return envelope({"nodes": nodes, "edges": edges}, node_count=len(nodes), edge_count=len(edges))
 
 
+@app.get("/api/nearby-hospitals/{hospital_id}")
+def nearby_hospitals(hospital_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    if user.get("role") != "network_admin" and hospital_id != user["hospital_id"]:
+        raise HTTPException(status_code=403, detail="Nearby hospital access is scoped to the logged-in facility")
+    analysis = get_analysis()
+    destination = analysis["hospitals"].get(hospital_id)
+    if not destination:
+        raise HTTPException(status_code=404, detail="Hospital not found")
+    rows = []
+    for hospital in analysis["hospitals"].values():
+        if hospital["hospital_id"] == hospital_id:
+            continue
+        matches = [item for item in analysis["transfers"] if item["destination_hospital_id"] == hospital_id and item["source_hospital_id"] == hospital["hospital_id"]]
+        rows.append({
+            "hospital_id": hospital["hospital_id"], "hospital_name": hospital["name"],
+            "city": hospital["city"], "latitude": hospital["latitude"], "longitude": hospital["longitude"],
+            "distance_km": min((item["distance_km"] for item in matches), default=None),
+            "eligible_supplies": [{"supply": item["supply"], "quantity": item["recommended_quantity"], "priority_score": item["priority_score"]} for item in matches],
+            "eligible": bool(matches), "local_radius_km": LOCAL_RADIUS_KM,
+        })
+    return envelope(sorted(rows, key=lambda row: (not row["eligible"], row["distance_km"] or 999)), count=len(rows))
+
+
 @app.get("/api/hospitals")
-def hospitals() -> dict[str, Any]:
-    rows = _hospital_summary(get_analysis())
+def hospitals(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = _hospital_summary(scoped_analysis(user))
     return envelope(rows, count=len(rows))
 
 
 @app.get("/api/hospitals/{hospital_id}")
-def hospital_detail(hospital_id: str) -> dict[str, Any]:
-    analysis = get_analysis()
+def hospital_detail(hospital_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    if user.get("role") != "network_admin" and hospital_id != user["hospital_id"]:
+        raise HTTPException(status_code=403, detail="Hospital access is scoped to the logged-in facility")
+    analysis = scoped_analysis(user)
     hospital = analysis["hospitals"].get(hospital_id)
     if not hospital:
         raise HTTPException(status_code=404, detail="Hospital not found")
@@ -272,8 +350,8 @@ def hospital_detail(hospital_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/supplies")
-def supplies() -> dict[str, Any]:
-    analysis = get_analysis()
+def supplies(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    analysis = scoped_analysis(user)
     rows = []
     for supply_id, supply in analysis["supplies"].items():
         related = [item for item in analysis["forecasts"] if item["supply_id"] == supply_id]
@@ -284,8 +362,11 @@ def supplies() -> dict[str, Any]:
 
 
 @app.get("/api/inventory")
-def inventory(hospital_id: str | None = None, supply_id: str | None = None, risk: str | None = None, search: str | None = None, page: int = Query(default=1, ge=1), page_size: int = Query(default=25, ge=1, le=1000)) -> dict[str, Any]:
-    rows = _inventory_rows(get_analysis())
+def inventory(hospital_id: str | None = None, supply_id: str | None = None, risk: str | None = None, search: str | None = None, page: int = Query(default=1, ge=1), page_size: int = Query(default=25, ge=1, le=1000), user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    analysis = scoped_analysis(user)
+    if user.get("role") != "network_admin":
+        hospital_id = user["hospital_id"]
+    rows = _inventory_rows(analysis)
     if hospital_id:
         rows = [item for item in rows if item["hospital_id"] == hospital_id]
     if supply_id:
@@ -301,8 +382,11 @@ def inventory(hospital_id: str | None = None, supply_id: str | None = None, risk
 
 
 @app.get("/api/forecast")
-def forecast(hospital_id: str = "H003", supply_id: str = "MED001", horizon_days: int = Query(default=14, ge=7, le=60)) -> dict[str, Any]:
-    analysis = get_analysis()
+def forecast(hospital_id: str | None = None, supply_id: str = "MED001", horizon_days: int = Query(default=14, ge=7, le=60), user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    hospital_id = hospital_id or user["hospital_id"]
+    if user.get("role") != "network_admin" and hospital_id != user["hospital_id"]:
+        raise HTTPException(status_code=403, detail="Forecast access is scoped to the logged-in facility")
+    analysis = scoped_analysis(user)
     row = next((item for item in analysis["forecasts"] if item["hospital_id"] == hospital_id and item["supply_id"] == supply_id), None)
     if not row:
         raise HTTPException(status_code=404, detail="No forecast exists for this hospital and supply")
@@ -317,24 +401,24 @@ def run_forecast(payload: ForecastRun) -> dict[str, Any]:
 
 
 @app.get("/api/shortages")
-def shortages(risk: str | None = None) -> dict[str, Any]:
-    rows = get_shortage_risks()
+def shortages(risk: str | None = None, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = scoped_analysis(user)["shortages"]
     if risk:
         rows = [item for item in rows if item["risk_level"] == risk.upper()]
     return envelope(rows, count=len(rows))
 
 
 @app.get("/api/expiry-risks")
-def expiry_risks(risk: str | None = None) -> dict[str, Any]:
-    rows = get_expiry_risks()
+def expiry_risks(risk: str | None = None, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = scoped_analysis(user)["expiry_risks"]
     if risk:
         rows = [item for item in rows if item["risk_level"] == risk.upper()]
     return envelope(rows, count=len(rows))
 
 
 @app.get("/api/redistribution")
-def redistribution() -> dict[str, Any]:
-    rows = [{**item, "status": action_status.get(item["recommendation_id"], item["status"])} for item in get_redistribution_recommendations()]
+def redistribution(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = [{**item, "status": action_status.get(item["recommendation_id"], item["status"])} for item in scoped_analysis(user)["transfers"]]
     return envelope(rows, count=len(rows))
 
 
@@ -363,14 +447,14 @@ def reject_transfer(recommendation_id: str) -> dict[str, Any]:
 
 
 @app.get("/api/prioritisation")
-def prioritisation() -> dict[str, Any]:
-    rows = get_priority_supplies()
+def prioritisation(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = scoped_analysis(user)["priorities"]
     return envelope(rows, count=len(rows))
 
 
 @app.get("/api/alerts")
-def alerts() -> dict[str, Any]:
-    analysis = get_analysis()
+def alerts(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    analysis = scoped_analysis(user)
     rows = [{"id": f"short-{index}", "type": "shortage", "risk_level": item["risk_level"], "title": f"{item['supply']} at {item['hospital']}", "detail": f"Projected stock-out in {item['days_until_stockout']} days", "created_at": date.today().isoformat()} for index, item in enumerate(analysis["shortages"][:10])]
     rows.extend({"id": f"expiry-{index}", "type": "expiry", "risk_level": item["risk_level"], "title": f"{item['supply']} batch {item['batch_id']}", "detail": f"{item['expected_waste']} units at risk; expires in {item['days_until_expiry']} days", "created_at": date.today().isoformat()} for index, item in enumerate(analysis["expiry_risks"][:10]))
     return envelope(rows, count=len(rows))
@@ -385,9 +469,9 @@ def run_analysis() -> dict[str, Any]:
 
 
 @app.post("/api/assistant/query")
-def assistant_query(payload: AssistantQuery) -> dict[str, Any]:
+def assistant_query(payload: AssistantQuery, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     provider = get_assistant_provider()
-    return envelope(provider.answer(payload.question, get_analysis()))
+    return envelope(provider.answer(payload.question, scoped_analysis(user)))
 
 
 @app.exception_handler(Exception)

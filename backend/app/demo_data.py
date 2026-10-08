@@ -5,25 +5,8 @@ from typing import Any
 
 HOSPITAL_SEEDS = [
     ("Coimbatore Central Hospital", "Coimbatore", "Tamil Nadu", 11.0168, 76.9558),
-    ("Chennai General Medical Centre", "Chennai", "Tamil Nadu", 13.0827, 80.2707),
-    ("Madurai Emergency Medical Center", "Madurai", "Tamil Nadu", 9.9252, 78.1198),
-    ("Mysuru Institute of Health", "Mysuru", "Karnataka", 12.2958, 76.6394),
-    ("Bengaluru North Hospital", "Bengaluru", "Karnataka", 13.0820, 77.5970),
-    ("Kochi Metropolitan Hospital", "Kochi", "Kerala", 9.9312, 76.2673),
-    ("Hyderabad District Hospital", "Hyderabad", "Telangana", 17.3850, 78.4867),
-    ("Vijayawada Medical College", "Vijayawada", "Andhra Pradesh", 16.5062, 80.6480),
-    ("Pune Central Hospital", "Pune", "Maharashtra", 18.5204, 73.8567),
-    ("Mumbai Harbour Hospital", "Mumbai", "Maharashtra", 19.0760, 72.8777),
-    ("Nagpur Regional Hospital", "Nagpur", "Maharashtra", 21.1458, 79.0882),
-    ("Ahmedabad Civil Medical Centre", "Ahmedabad", "Gujarat", 23.0225, 72.5714),
-    ("Jaipur City Hospital", "Jaipur", "Rajasthan", 26.9124, 75.7873),
-    ("Lucknow Medical Institute", "Lucknow", "Uttar Pradesh", 26.8467, 80.9462),
-    ("Bhopal Community Hospital", "Bhopal", "Madhya Pradesh", 23.2599, 77.4126),
-    ("Bhubaneswar Regional Medical Centre", "Bhubaneswar", "Odisha", 20.2961, 85.8245),
-    ("Guwahati Valley Hospital", "Guwahati", "Assam", 26.1445, 91.7362),
-    ("Patna East Hospital", "Patna", "Bihar", 25.5941, 85.1376),
-    ("Amritsar District Medical Centre", "Amritsar", "Punjab", 31.6340, 74.8723),
-    ("Dehradun Himalayan Hospital", "Dehradun", "Uttarakhand", 30.3165, 78.0322),
+    ("Coimbatore Emergency Medical Center", "Coimbatore", "Tamil Nadu", 11.0302, 76.9550),
+    ("Coimbatore Regional Hospital", "Coimbatore", "Tamil Nadu", 11.0456, 76.9710),
 ]
 
 SUPPLY_SEEDS = [
@@ -32,23 +15,12 @@ SUPPLY_SEEDS = [
     ("Dextrose 5% 500ml", "IV Fluids", "bags", 0.55, "medium"),
     ("Emergency Antibiotic X", "Antibiotics", "vials", 0.38, "critical"),
     ("Ceftriaxone 1g", "Antibiotics", "vials", 0.75, "high"),
-    ("Amoxicillin 500mg", "Essential Medicines", "strips", 0.8, "medium"),
-    ("Paracetamol 500mg", "Essential Medicines", "strips", 1.4, "medium"),
-    ("Insulin Regular 10ml", "Essential Medicines", "vials", 0.22, "critical"),
     ("Adrenaline 1mg", "Emergency Medicines", "ampoules", 0.12, "critical"),
     ("Oxygen Mask Adult", "Emergency Medicines", "units", 0.3, "high"),
-    ("N95 Respirator", "PPE", "units", 1.8, "medium"),
     ("Surgical Gloves (pair)", "PPE", "pairs", 5.0, "medium"),
-    ("Surgical Gown", "Surgical Supplies", "units", 0.85, "medium"),
-    ("Sterile Gauze Pack", "Surgical Supplies", "packs", 2.2, "low"),
     ("Syringe 5ml", "Surgical Supplies", "units", 3.5, "medium"),
     ("Rapid Diagnostic Kit", "Diagnostic Supplies", "kits", 0.45, "high"),
     ("Blood Glucose Strips", "Diagnostic Supplies", "strips", 1.1, "medium"),
-    ("Hepatitis B Vaccine", "Vaccines", "doses", 0.14, "high"),
-    ("Tetanus Vaccine", "Vaccines", "doses", 0.12, "medium"),
-    ("Pediatric ORS Sachet", "Essential Medicines", "sachets", 1.0, "medium"),
-    ("Pneumonia Test Kit", "Diagnostic Supplies", "kits", 0.25, "high"),
-    ("IV Cannula 20G", "Surgical Supplies", "units", 1.1, "medium"),
     ("Oxygen Tubing Set", "Emergency Medicines", "units", 0.28, "high"),
     ("Antivenom 10ml", "Emergency Medicines", "vials", 0.04, "critical"),
 ]
@@ -117,18 +89,21 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
         for supply_index, supply in enumerate(supplies, start=1):
             daily = max(0.6, supply["base_daily_demand"] * patient_factor * _variation(hospital_index, supply_index) * 300)
             if supply_index == 1 and hospital["hospital_id"] == "H001":
-                total_stock = 10000
-                safety_stock = 1800
-            elif supply_index == 1 and hospital["hospital_id"] == "H003":
-                total_stock = 1300
+                total_stock = 900
+                safety_stock = 250
+            elif supply_index == 1 and hospital["hospital_id"] == "H002":
+                total_stock = 2500
                 safety_stock = 800
+            elif supply_index == 1 and hospital["hospital_id"] == "H003":
+                total_stock = 600
+                safety_stock = 500
             else:
                 coverage = 17 + (hospital_index * 11 + supply_index * 7) % 43
                 total_stock = max(30, round(daily * coverage))
                 safety_stock = max(12, round(daily * (5 + (supply_index % 5))))
 
             expiry_offset = 30 + (hospital_index * 19 + supply_index * 23) % 300
-            if scenario == "expiry" and hospital["hospital_id"] in {"H001", "H005", "H008"} and supply_index in {1, 6, 7, 18}:
+            if scenario == "expiry" and hospital["hospital_id"] in {"H001", "H002", "H003"} and supply_index in {1, 4, 6, 9}:
                 expiry_offset = 8 + (hospital_index + supply_index) % 9
             elif hospital["hospital_id"] == "H001" and supply_index == 1:
                 expiry_offset = 23
@@ -161,9 +136,9 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
                 trend = 1 + day_index * ((supply_index % 5) - 2) / 1800
                 spike = 1.0
                 outbreak = 0.0
-                target_spike = hospital["hospital_id"] == "H003" and supply_index in (1, 4, 9)
+                target_spike = hospital["hospital_id"] == "H001" and supply_index in (1, 4, 9)
                 if scenario == "outbreak" and target_spike and day_index >= 83:
-                    spike, outbreak = 2.0, 0.8
+                    spike, outbreak = 2.6, 0.8
                 elif scenario == "critical" and target_spike and day_index >= 76:
                     spike, outbreak = 1.9, 0.75
                 elif scenario == "redistribution" and target_spike and day_index >= 83:
