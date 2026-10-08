@@ -1,13 +1,13 @@
-# MediSupplyIQ
+# StockWatch-RX
 
 **AI for Medical Supply Intelligence**  
 *Know Before the Shortage.*
 
-MediSupplyIQ is a decision-support prototype for anticipating medical supply shortages, highlighting expiry exposure, ranking critical demand, and recommending explainable inter-hospital transfers. It uses synthetic Indian hospital and supply data only; it is not a clinical or procurement authority.
+StockWatch-RX is a decision-support prototype for anticipating medical supply shortages, highlighting expiry exposure, ranking critical demand, and recommending explainable inter-hospital transfers. It uses synthetic Indian hospital and supply data only; it is not a clinical or procurement authority.
 
 ## Problem and solution
 
-Hospitals can hold excess stock while nearby facilities approach a stock-out, and batches may expire before consumption. MediSupplyIQ joins 90 days of synthetic demand history with inventory batches, estimates near-term demand, detects risk, and proposes transfers only when a source remains above its safety stock and a seven-day reserve.
+Hospitals can hold excess stock while nearby facilities approach a stock-out, and batches may expire before consumption. StockWatch-RX joins 90 days of synthetic demand history with inventory batches, estimates near-term demand, detects risk, and proposes transfers only when a source remains above its safety stock and a seven-day reserve.
 
 ## Architecture
 
