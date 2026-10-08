@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { ArrowRight, MapPin, Network, TriangleAlert } from 'lucide-react'
 import { CircleMarker, MapContainer, Polyline, Popup, TileLayer } from 'react-leaflet'
 import 'leaflet/dist/leaflet.css'
@@ -94,15 +94,18 @@ export default function NetworkFlow({ refresh = 0 }) {
   const expiryCount = nodes.filter((node) => node.expiry_units_at_risk > 0).length
   const selected = selectedRoute ? edges.find((edge) => edge.recommendation_id === selectedRoute) : null
   const selectedRoadPath = routeDetails.coordinates.length > 1 ? routeDetails.coordinates : (selected ? [[byId[selected.source_hospital_id]?.latitude, byId[selected.source_hospital_id]?.longitude], [byId[selected.destination_hospital_id]?.latitude, byId[selected.destination_hospital_id]?.longitude]] : [])
-  const routeHeadline = useMemo(() => {
-    if (!selected) return 'Select a marker or eligible route to inspect local redistribution details.'
-    if (routeDetails.loading) return 'Calculating real road route and ETA…'
-    if (routeDetails.error) return `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · road route temporarily unavailable; local estimate active.`
-    if (routeDetails.distanceKm != null && routeDetails.durationMinutes != null) {
-      return `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · ${routeDetails.distanceKm.toFixed(1)} km road route · ${routeDetails.durationMinutes} min ETA · transfer feasible.`
+  let routeHeadline = 'Select a marker or eligible route to inspect local redistribution details.'
+  if (selected) {
+    if (routeDetails.loading) {
+      routeHeadline = 'Calculating real road route and ETA…'
+    } else if (routeDetails.error) {
+      routeHeadline = `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · road route temporarily unavailable; local estimate active.`
+    } else if (routeDetails.distanceKm != null && routeDetails.durationMinutes != null) {
+      routeHeadline = `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · ${routeDetails.distanceKm.toFixed(1)} km road route · ${routeDetails.durationMinutes} min ETA · transfer feasible.`
+    } else {
+      routeHeadline = `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · ${selected.distance_km} km · source safety stock maintained.`
     }
-    return `${selected.source} → ${selected.destination}: ${selected.quantity.toLocaleString()} ${selected.supply} · ${selected.distance_km} km · source safety stock maintained.`
-  }, [selected, routeDetails])
+  }
 
   return <section className="panel network-panel">
     <div className="panel-heading"><div><span>NETWORK FLOW · REAL COORDINATES</span><h2>Surplus to need</h2></div><span className="network-summary">{nodes.length} facilities · {edges.length} feasible routes</span></div>
