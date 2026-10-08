@@ -32,6 +32,7 @@ The forecast is labelled **Prototype Forecast** and uses a weighted moving avera
 - Batch-level expected expiry waste and recommended rotation.
 - Surgery schedule create/edit/cancel, non-persistent what-if forecast simulation, and schedule-linked demand/risk explanations.
 - Hospital-controlled shareable pools. Nearby hospitals see only enabled supply and quantity; source inventory, safety reserves, and unshared supplies are private.
+- Non-persistent transfer what-if simulation for sharing on/off, shareable quantity, and ETA delay; the result is not written to hospital settings.
 - FEFO lot allocation and expiry-aware transfer feasibility. Transfer amounts are bounded by shareable quantity, source surplus after reserve, destination need, eligible source lots, and supply-specific transfer caps.
 - OSRM road geometry/distance/ETA; no-route or provider failure leaves transfer feasibility unverified and does not draw a fabricated road path.
 - Weekly management report with calculated shortages, surgeries, transfers, expiry risks, management actions, CSV export, and browser print-to-PDF.
@@ -130,7 +131,7 @@ All application routes are under `/api` and return `{ "data": ..., "meta": ... }
 - `POST /forecast/simulate`
 - `GET /surgery-types`, `GET/POST /surgeries`, `PUT/DELETE /surgeries/{surgery_id}`
 - `GET/POST /shareable-pool`
-- `GET /nearby-supplies`, `GET /routes`
+- `GET /nearby-supplies`, `POST /nearby-supplies/simulate`, `GET /routes`
 - `GET /management-report/weekly`
 - `GET /shortages`
 - `GET /expiry-risks`

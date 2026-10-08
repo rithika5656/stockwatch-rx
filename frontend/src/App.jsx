@@ -97,6 +97,38 @@ function DashboardHero({ data, scenarioLabel, authUser }) {
 
 function NearbyPage({ refresh, hospitalId }) {
   const { data, loading, error } = useApiData('/nearby-supplies', refresh)
+  const hospitals = useApiData('/hospitals', refresh).data || []
+  const supplies = useApiData('/supplies', refresh).data || []
+  const [whatIfSource, setWhatIfSource] = useState('')
+  const [whatIfSupply, setWhatIfSupply] = useState('MED001')
+  const [whatIfEnabled, setWhatIfEnabled] = useState(true)
+  const [whatIfQuantity, setWhatIfQuantity] = useState('600')
+  const [etaIncrease, setEtaIncrease] = useState('0')
+  const [simulation, setSimulation] = useState(null)
+  const [simulating, setSimulating] = useState(false)
+  const [simulationError, setSimulationError] = useState('')
+  const sourceOptions = hospitals.filter((item) => item.hospital_id !== hospitalId)
+  const sourceId = whatIfSource || sourceOptions[0]?.hospital_id || ''
+
+  async function simulateTransfer(event) {
+    event.preventDefault()
+    setSimulating(true)
+    setSimulationError('')
+    try {
+      setSimulation(await post('/nearby-supplies/simulate', {
+        source_hospital_id: sourceId,
+        supply_id: whatIfSupply,
+        sharing_enabled: whatIfEnabled,
+        shareable_quantity: Number(whatIfQuantity),
+        eta_increase_minutes: Number(etaIncrease),
+      }))
+    } catch (requestError) {
+      setSimulationError(getErrorMessage(requestError))
+    } finally {
+      setSimulating(false)
+    }
+  }
+
   const [requested, setRequested] = useState({})
   const [requestError, setRequestError] = useState('')
   async function requestTransfer(item) {
@@ -108,7 +140,16 @@ function NearbyPage({ refresh, hospitalId }) {
       setRequestError(getErrorMessage(error))
     }
   }
-  return <><Heading title="Nearby hospitals" description="Local hospitals and supplies explicitly offered to this facility; internal source stock remains private." />{requestError && <Error message={requestError} />}<section className="nearby-match-list">{loading ? <Loading /> : error ? <Error message={error} /> : !data?.length ? <div className="panel empty-state"><Building2 size={20} /><strong>No shareable supply matches</strong><span>Nearby facilities have not enabled a compatible pool, or no transfer is currently feasible.</span></div> : data.map((item) => <article className="panel nearby-match" key={`${item.hospital_id}-${item.supply_id}`}><div className="nearby-match-main"><span className="eyebrow">{item.hospital_id} · {item.supply_id}</span><h2>{item.hospital_name}</h2><strong>{item.supply}</strong><span>{item.shareable_quantity.toLocaleString()} units shareable</span></div><div className="nearby-match-route"><span><strong>{item.road_distance_km == null ? '—' : `${item.road_distance_km} km`}</strong>road distance</span><span><strong>{item.estimated_travel_minutes == null ? '—' : `${item.estimated_travel_minutes} min`}</strong>OSRM ETA</span><span className={`feasibility-tag ${item.feasible ? 'feasible' : 'not-feasible'}`}>{item.status}</span></div><div className="nearby-match-footer"><p>{item.reason}</p><div className="nearby-match-actions">{item.feasible && <NavLink className="button button-secondary" to="/map">View route <ArrowUpRight size={14} /></NavLink>}<button className="button button-primary" disabled={!item.feasible || !item.recommendation_id || Boolean(requested[item.recommendation_id])} onClick={() => requestTransfer(item)}>{requested[item.recommendation_id] || 'Request transfer'}<ArrowRight size={14} /></button></div></div></article>)}</section><p className="prototype-disclaimer">Hospital locations are based on public map data; supply availability and demand are simulated. Facility {hospitalId} only sees quantities explicitly shared.</p></>
+  return <><Heading title="Nearby hospitals" description="Local hospitals and supplies explicitly offered to this facility; internal source stock remains private." />
+    <section className="panel what-if-panel"><div className="what-if-heading"><div><span className="eyebrow">NON-PERSISTENT SCENARIO</span><h2>What-if transfer feasibility</h2></div><span className="risk-badge medium">SIMULATION</span></div><form className="what-if-controls" onSubmit={simulateTransfer}>
+      <Select label="Source hospital" value={sourceId} change={setWhatIfSource} options={sourceOptions.map((item) => [item.hospital_id, item.display_name || item.name])} />
+      <Select label="Supply" value={whatIfSupply} change={setWhatIfSupply} options={supplies.map((item) => [item.supply_id, item.name])} />
+      <label className="filter-control"><span>Shareable units</span><input type="number" min="0" value={whatIfQuantity} onChange={(event) => setWhatIfQuantity(event.target.value)} /></label>
+      <label className="filter-control"><span>Added ETA (minutes)</span><input type="number" min="0" max="10080" value={etaIncrease} onChange={(event) => setEtaIncrease(event.target.value)} /></label>
+      <label className="sharing-toggle"><input type="checkbox" checked={whatIfEnabled} onChange={(event) => setWhatIfEnabled(event.target.checked)} /><span>Sharing enabled</span></label>
+      <button className="button button-secondary" type="submit" disabled={simulating || !sourceId}>{simulating ? 'Recalculating...' : 'Recalculate feasibility'}<Activity size={14} /></button>
+    </form>{simulationError && <div className="simulation-error">{simulationError}</div>}{simulation && <div className="what-if-result"><span className={`feasibility-tag ${simulation.feasible ? 'feasible' : 'not-feasible'}`}>{simulation.status}</span><strong>{simulation.recommended_quantity.toLocaleString()} units</strong><span>{simulation.road_distance_km == null ? 'Road route unavailable' : `${simulation.road_distance_km} km · ${simulation.estimated_travel_minutes} min ETA`}</span><p>{simulation.reason}</p></div>}</section>
+    {requestError && <Error message={requestError} />}<section className="nearby-match-list">{loading ? <Loading /> : error ? <Error message={error} /> : !data?.length ? <div className="panel empty-state"><Building2 size={20} /><strong>No shareable supply matches</strong><span>Nearby facilities have not enabled a compatible pool, or no transfer is currently feasible.</span></div> : data.map((item) => <article className="panel nearby-match" key={`${item.hospital_id}-${item.supply_id}`}><div className="nearby-match-main"><span className="eyebrow">{item.hospital_id} · {item.supply_id}</span><h2>{item.hospital_name}</h2><strong>{item.supply}</strong><span>{item.shareable_quantity.toLocaleString()} units shareable</span></div><div className="nearby-match-route"><span><strong>{item.road_distance_km == null ? '—' : `${item.road_distance_km} km`}</strong>road distance</span><span><strong>{item.estimated_travel_minutes == null ? '—' : `${item.estimated_travel_minutes} min`}</strong>OSRM ETA</span><span className={`feasibility-tag ${item.feasible ? 'feasible' : 'not-feasible'}`}>{item.status}</span></div><div className="nearby-match-footer"><p>{item.reason}</p><div className="nearby-match-actions">{item.feasible && <NavLink className="button button-secondary" to="/map">View route <ArrowUpRight size={14} /></NavLink>}<button className="button button-primary" disabled={!item.feasible || !item.recommendation_id || Boolean(requested[item.recommendation_id])} onClick={() => requestTransfer(item)}>{requested[item.recommendation_id] || 'Request transfer'}<ArrowRight size={14} /></button></div></div></article>)}</section><p className="prototype-disclaimer">Hospital locations are based on public map data; supply availability and demand are simulated. Facility {hospitalId} only sees quantities explicitly shared.</p></>
 }
 
 function MapPage({ refresh }) {

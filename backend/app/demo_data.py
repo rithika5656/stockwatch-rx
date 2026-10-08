@@ -25,6 +25,13 @@ SUPPLY_SEEDS = [
     ("Antivenom 10ml", "Emergency Medicines", "vials", 0.04, "critical"),
 ]
 
+SURGERY_TYPES = {
+    "general_surgery": {"MED001": 1.5, "MED002": 0.5, "MED004": 0.2, "MED005": 0.3, "MED008": 2.0, "MED009": 1.0},
+    "orthopedic": {"MED001": 2.0, "MED002": 0.5, "MED004": 0.1, "MED005": 0.2, "MED008": 3.0, "MED009": 1.0},
+    "cardiac": {"MED001": 3.0, "MED002": 1.0, "MED004": 0.4, "MED005": 0.5, "MED006": 2.0, "MED008": 3.0, "MED009": 2.0},
+    "emergency": {"MED001": 2.0, "MED002": 1.0, "MED004": 0.6, "MED005": 0.4, "MED006": 1.0, "MED008": 2.0, "MED009": 2.0},
+}
+
 
 def _variation(*values: int) -> float:
     return 0.82 + (sum(values) % 37) / 100
@@ -157,11 +164,24 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
                 noise = 0.91 + ((day_index * 7 + hospital_index * 3 + supply_index * 11) % 20) / 100
                 seasonality = weekly * (1.12 if day.month in {6, 7, 8} else 1.0)
                 historical_patient_load = min(0.99, hospital["occupancy_rate"] * (1 + outbreak * 0.12))
+                surgery_count = (day_index + hospital_index * 2 + supply_index) % 5
+                emergency_surgery_count = int((day_index + hospital_index + supply_index) % 17 == 0)
+                supply_id = supply["supply_id"]
+                per_case_demand = sum(mapping.get(supply_id, 0.0) for mapping in SURGERY_TYPES.values()) / len(SURGERY_TYPES)
+                emergency_per_case = SURGERY_TYPES["emergency"].get(supply_id, 0.0)
+                expected_surgery_demand = surgery_count * per_case_demand + emergency_surgery_count * emergency_per_case
+                surgery_duration = surgery_count * (90 + (day_index + hospital_index) % 61) + emergency_surgery_count * 60
                 demand_history.append({
                     "hospital_id": hospital["hospital_id"], "supply_id": supply["supply_id"],
-                    "date": day.isoformat(), "quantity_used": round(daily * seasonality * trend * spike * noise, 1),
+                    "date": day.isoformat(), "quantity_used": round(daily * seasonality * trend * spike * noise + expected_surgery_demand, 1),
                     "patient_load": round(historical_patient_load, 3),
                     "emergency_cases": round(hospital["emergency_load"] * hospital["bed_capacity"] * spike * 0.08),
+                    "surgery_count": surgery_count,
+                    "emergency_surgery_count": emergency_surgery_count,
+                    "surgery_type_count": min(surgery_count, 1 + (day_index + supply_index) % 4) if surgery_count else 0,
+                    "expected_surgery_demand": round(expected_surgery_demand, 1),
+                    "surgery_duration": surgery_duration,
+                    "surgery_day_indicator": int(surgery_count > 0 or emergency_surgery_count > 0),
                     "seasonality_factor": round(seasonality, 3),
                     "outbreak_signal": outbreak,
                 })

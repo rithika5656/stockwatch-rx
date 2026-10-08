@@ -6,6 +6,8 @@ from math import atan2, cos, radians, sin, sqrt
 import os
 from typing import Any
 
+from .demo_data import SURGERY_TYPES
+
 RISK_ORDER = {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}
 RISK_THRESHOLDS = {
     "critical_days": int(os.getenv("RISK_CRITICAL_DAYS", "2")),
@@ -18,12 +20,6 @@ SIMULATION_DAYS = 365
 PRIORITY_WEIGHTS = {"emergency_demand": 0.35, "patient_load": 0.25, "stockout_urgency": 0.20, "alternative_availability": 0.10, "supply_criticality": 0.10}
 REDISTRIBUTION_WEIGHTS = {"shortage_urgency": 0.30, "stockout_probability": 0.20, "demand_pressure": 0.10, "emergency_load": 0.10, "supply_criticality": 0.15, "expiry_urgency": 0.10, "transport_feasibility": 0.05}
 LOCAL_RADIUS_KM = float(os.getenv("LOCAL_REDISTRIBUTION_RADIUS_KM", "15"))
-SURGERY_TYPES = {
-    "general_surgery": {"MED001": 1.5, "MED002": 0.5, "MED004": 0.2, "MED005": 0.3, "MED008": 2.0, "MED009": 1.0},
-    "orthopedic": {"MED001": 2.0, "MED002": 0.5, "MED004": 0.1, "MED005": 0.2, "MED008": 3.0, "MED009": 1.0},
-    "cardiac": {"MED001": 3.0, "MED002": 1.0, "MED004": 0.4, "MED005": 0.5, "MED006": 2.0, "MED008": 3.0, "MED009": 2.0},
-    "emergency": {"MED001": 2.0, "MED002": 1.0, "MED004": 0.6, "MED005": 0.4, "MED006": 1.0, "MED008": 2.0, "MED009": 2.0},
-}
 
 
 def _risk(days: float, probability: float) -> str:

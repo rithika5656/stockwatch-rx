@@ -82,6 +82,14 @@ class ForecastSimulationPayload(BaseModel):
     supply_id: str = "MED001"
 
 
+class TransferSimulationPayload(BaseModel):
+    source_hospital_id: str
+    supply_id: str
+    sharing_enabled: bool = True
+    shareable_quantity: int = Field(default=0, ge=0)
+    eta_increase_minutes: int = Field(default=0, ge=0, le=10080)
+
+
 def envelope(data: Any, **meta: Any) -> dict[str, Any]:
     return {"data": data, "meta": {"source": database.DATA_SOURCE, **meta}}
 
@@ -511,6 +519,78 @@ def nearby_supplies(supply_id: str | None = None, user: dict[str, Any] = Depends
         })
     options.sort(key=lambda row: (not row["feasible"], row["estimated_travel_minutes"] or 99999, row["road_distance_km"] or 99999))
     return envelope(options, count=len(options), privacy="Only explicitly enabled shareable quantities are included")
+
+
+@app.post("/api/nearby-supplies/simulate")
+def simulate_nearby_supply(payload: TransferSimulationPayload, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    analysis = get_analysis()
+    destination_id = user["hospital_id"]
+    source = analysis["hospitals"].get(payload.source_hospital_id)
+    destination = analysis["hospitals"].get(destination_id)
+    supply = analysis["supplies"].get(payload.supply_id)
+    source_forecast = next((row for row in analysis["forecasts"] if row["hospital_id"] == payload.source_hospital_id and row["supply_id"] == payload.supply_id), None)
+    destination_forecast = next((row for row in analysis["forecasts"] if row["hospital_id"] == destination_id and row["supply_id"] == payload.supply_id), None)
+    if not source or not destination or not supply or not source_forecast or not destination_forecast:
+        raise HTTPException(status_code=404, detail="Local source, destination, or supply was not found")
+    if payload.source_hospital_id == destination_id or source.get("city") != destination.get("city"):
+        raise HTTPException(status_code=422, detail="Choose a different facility in the local hospital network")
+
+    source_lead = source_forecast["supplier_lead_time"]
+    source_reserve = source_forecast["safety_stock"] + source_forecast["forecast_daily_demand"] * min(7, max(2, source_lead))
+    source_surplus = max(0, round(source_forecast["current_stock"] - source_reserve))
+    result: dict[str, Any] = {
+        "hospital_id": source["hospital_id"], "hospital_name": source["display_name"],
+        "supply_id": payload.supply_id, "supply": supply["name"],
+        "sharing_enabled": payload.sharing_enabled,
+        "shareable_quantity": min(payload.shareable_quantity, source_surplus) if payload.sharing_enabled else 0,
+        "eta_increase_minutes": payload.eta_increase_minutes,
+        "route_available": False, "road_distance_km": None, "estimated_travel_minutes": None,
+        "recommended_quantity": 0, "feasible": False, "status": "NOT FEASIBLE",
+    }
+    reasons = []
+    if not payload.sharing_enabled or payload.shareable_quantity <= 0:
+        reasons.append("Source sharing is disabled or the simulated pool is zero")
+    try:
+        route = road_route(source, destination)
+        travel_minutes = route["duration_minutes"] + payload.eta_increase_minutes
+        result.update({
+            "route_available": True, "road_distance_km": route["distance_km"],
+            "estimated_travel_minutes": travel_minutes,
+        })
+        shareable = min(payload.shareable_quantity, source_surplus) if payload.sharing_enabled else 0
+        target_need = max(0, round(
+            destination_forecast["safety_stock"]
+            + destination_forecast["forecast_daily_demand"] * max(1, destination_forecast["supplier_lead_time"] - travel_minutes / 1440)
+            - destination_forecast["current_stock"]
+        ))
+        arrival_date = date.today() + timedelta(days=max(1, (travel_minutes + 1439) // 1440))
+        eligible_batches = [batch for batch in analysis["batches"][(payload.source_hospital_id, payload.supply_id)]
+                            if batch.get("batch_status") != "expired" and date.fromisoformat(batch["expiry_date"]) >= arrival_date]
+        transfer_cap = int(supply.get("max_transfer_quantity", target_need))
+        quantity = min(shareable, target_need, sum(batch["quantity"] for batch in eligible_batches), transfer_cap)
+        deadline_minutes = destination_forecast["days_until_stockout"] * 1440
+        enough_quantity = quantity >= max(1, round(destination_forecast["forecast_daily_demand"] * 0.1))
+        need_window = destination_forecast["days_until_stockout"] <= 14
+        eta_in_time = travel_minutes < deadline_minutes
+        result["recommended_quantity"] = quantity
+        result["feasible"] = bool(payload.sharing_enabled and enough_quantity and need_window and eta_in_time and eligible_batches)
+        result["status"] = "FEASIBLE" if result["feasible"] else "NOT FEASIBLE"
+        if not payload.sharing_enabled or shareable <= 0:
+            reasons.append("No enabled shareable quantity remains after the source reserve")
+        if not target_need:
+            reasons.append("No predicted destination need through supplier lead time")
+        if not eligible_batches:
+            reasons.append("No unexpired source batch remains valid through arrival")
+        if not enough_quantity:
+            reasons.append("Transfer quantity is below the minimum useful amount")
+        if not need_window:
+            reasons.append("Destination safety-stock breach is outside the 14-day transfer window")
+        if not eta_in_time:
+            reasons.append("Simulated ETA is after the predicted safety-stock breach")
+    except ValueError as error:
+        reasons.append(str(error))
+    result["reason"] = "Simulated pool, demand, FEFO, source reserve, and road ETA pass." if result["feasible"] else "; ".join(dict.fromkeys(reasons))
+    return envelope(result, simulation=True, persisted=False, privacy="No source inventory or reserve values are returned")
 
 
 @app.post("/api/redistribution/{recommendation_id}/request")

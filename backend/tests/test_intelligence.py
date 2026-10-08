@@ -9,7 +9,7 @@ from app.demo_data import build_dataset
 from app.engine import RISK_THRESHOLDS, _risk, _simulate_fefo_batches, analyze
 from app import database
 from app import main as main_module
-from app.main import ForecastSimulationPayload, ShareablePoolPayload, SurgeryPayload
+from app.main import ForecastSimulationPayload, ShareablePoolPayload, SurgeryPayload, TransferSimulationPayload
 
 
 class IntelligenceTests(unittest.TestCase):
@@ -199,6 +199,22 @@ class IntelligenceTests(unittest.TestCase):
             self.assertTrue(psg_match["feasible"])
             request = main_module.request_transfer(psg_match["recommendation_id"], kmch_user)["data"]
             self.assertEqual(request["status"], "requested")
+            pool_simulation = main_module.simulate_nearby_supply(TransferSimulationPayload(
+                source_hospital_id="H002", supply_id="MED001", sharing_enabled=True,
+                shareable_quantity=300, eta_increase_minutes=0,
+            ), kmch_user)["data"]
+            self.assertTrue(pool_simulation["feasible"])
+            self.assertLessEqual(pool_simulation["recommended_quantity"], 300)
+            delayed_simulation = main_module.simulate_nearby_supply(TransferSimulationPayload(
+                source_hospital_id="H002", supply_id="MED001", sharing_enabled=True,
+                shareable_quantity=300, eta_increase_minutes=3000,
+            ), kmch_user)["data"]
+            self.assertFalse(delayed_simulation["feasible"])
+            disabled_simulation = main_module.simulate_nearby_supply(TransferSimulationPayload(
+                source_hospital_id="H002", supply_id="MED001", sharing_enabled=False,
+                shareable_quantity=300, eta_increase_minutes=0,
+            ), kmch_user)["data"]
+            self.assertFalse(disabled_simulation["feasible"])
 
             report = main_module.weekly_management_report(date.today(), date.today() + timedelta(days=6), kmch_user)["data"]
             self.assertEqual(report["executive_summary"]["upcoming_surgery_cases"], 12)
