@@ -7,10 +7,9 @@ import NetworkFlow from './components/NetworkFlow.jsx'
 import './App.css'
 
 const groups = [
-  ['OVERVIEW', [['/dashboard', 'Dashboard', LayoutDashboard]]],
-  ['INTELLIGENCE', [['/inventory', 'Inventory', Boxes], ['/forecasting', 'Forecasting', Activity], ['/shortages', 'Shortage risk', ShieldAlert], ['/expiry-risk', 'Expiry & waste', CalendarClock], ['/redistribution', 'Redistribution', Truck], ['/prioritisation', 'Prioritisation', Gauge]]],
-  ['NETWORK', [['/hospitals', 'Hospitals', Building2], ['/supplies', 'Supplies', PackageSearch]]],
-  ['TOOLS', [['/assistant', 'AI Copilot', Sparkles], ['/reports', 'Reports', FileBarChart2]]],
+  ['MY HOSPITAL', [['/dashboard', 'Dashboard', LayoutDashboard], ['/inventory', 'Inventory', Boxes], ['/forecasting', 'Forecasting', Activity], ['/shortages', 'Shortage Risk', ShieldAlert], ['/expiry-risk', 'Expiry & Waste', CalendarClock]]],
+  ['LOCAL NETWORK', [['/nearby', 'Nearby Hospitals', Building2], ['/redistribution', 'Redistribution', Truck], ['/map', 'Supply Map', Activity]]],
+  ['DECISIONS', [['/prioritisation', 'Prioritisation', Gauge], ['/assistant', 'Copilot', Sparkles], ['/reports', 'Reports', FileBarChart2]]],
 ]
 const titles = { '/dashboard': 'Supply intelligence', '/inventory': 'Inventory position', '/forecasting': 'Demand forecasting', '/shortages': 'Shortage risk', '/expiry-risk': 'Expiry & waste', '/redistribution': 'Redistribution queue', '/prioritisation': 'Critical prioritisation', '/hospitals': 'Hospital network', '/supplies': 'Medical supplies', '/assistant': 'MediSupply Copilot', '/reports': 'Reports & exports' }
 
@@ -57,8 +56,8 @@ function Shell() {
   const [scenario, setScenario] = useState('outbreak')
   const [scenarioLabel, setScenarioLabel] = useState('Outbreak surge')
   const [refresh, setRefresh] = useState(0)
-  if (!authUser) return <LoginScreen onLogin={setAuthUser} />
   useEffect(() => { get('/demo/scenario').then((item) => { setScenario(item.key); setScenarioLabel(item.label) }).catch(() => {}) }, [])
+  if (!authUser) return <LoginScreen onLogin={setAuthUser} />
   async function selectScenario(event) {
     try { const item = await post('/demo/scenario', { scenario: event.target.value }); setScenario(item.key); setScenarioLabel(item.label); setRefresh((current) => current + 1) }
     catch { event.target.value = scenario }
@@ -95,7 +94,19 @@ function DashboardHero({ data, scenarioLabel, authUser }) {
   </section>
 }
 
+function NearbyPage({ refresh, hospitalId }) {
+  const { data, loading, error } = useApiData(`/nearby-hospitals/${hospitalId}`, refresh)
+  return <><Heading title="Nearby hospitals" description="Local Coimbatore facilities with eligible surplus for this hospital." /><section className="panel data-panel"><div className="panel-heading"><div><span>LOCAL MATCHING</span><h2>Eligible nearby supply</h2></div><span className="inline-stat"><Activity size={15} />15 km demo radius</span></div>{loading ? <Loading /> : error ? <Error message={error} /> : <div className="nearby-list">{data?.map((item) => <article className="nearby-card" key={item.hospital_id}><div><span className="eyebrow">{item.hospital_id} · {item.distance_km ?? '—'} KM</span><h2>{item.hospital_name}</h2><p>{item.eligible ? `${item.eligible_supplies.length} eligible supply matches` : 'No eligible surplus for current risks'}</p></div><div className="nearby-supplies">{item.eligible_supplies.map((supply) => <span key={supply.supply}>{supply.supply} · {supply.quantity.toLocaleString()} units</span>)}</div></article>)}</div>}</section></>
+}
+
+function MapPage({ refresh }) {
+  return <><Heading title="Supply map" description="Interactive Coimbatore hospital map with local transfer routes and marker-level risk." /><NetworkFlow refresh={refresh} /></>
+}
+
 function Dashboard({ refresh, scenarioLabel, authUser }) {
+  const location = useLocation()
+  if (location.pathname === '/nearby') return <NearbyPage refresh={refresh} hospitalId={authUser.hospital_id} />
+  if (location.pathname === '/map') return <MapPage refresh={refresh} />
   const { data, loading, error } = useApiData('/dashboard/summary', refresh)
   if (loading && !data) return <Loading />
   if (error) return <Error message={error} />

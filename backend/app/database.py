@@ -52,7 +52,7 @@ def initialize_database(force_seed: bool = False) -> dict[str, Any]:
         if not DEMO_MODE:
             raise RuntimeError(f"MongoDB connection failed: {error}") from error
         DATA_SOURCE = "synthetic demo dataset (MongoDB unavailable)"
-        ACTIVE_DATA = build_dataset()
+        ACTIVE_DATA = build_dataset("outbreak")
         return ACTIVE_DATA
 
 

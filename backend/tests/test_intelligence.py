@@ -13,10 +13,10 @@ class IntelligenceTests(unittest.TestCase):
         dataset = build_dataset("normal")
         hospital_ids = {item["hospital_id"] for item in dataset["hospitals"]}
         supply_ids = {item["supply_id"] for item in dataset["supplies"]}
-        self.assertGreaterEqual(len(hospital_ids), 20)
-        self.assertGreaterEqual(len(supply_ids), 20)
-        self.assertGreaterEqual(len(dataset["inventory"]), 100)
-        self.assertGreaterEqual(len(dataset["demand_history"]), 20_000)
+        self.assertEqual(len(hospital_ids), 3)
+        self.assertGreaterEqual(len(supply_ids), 10)
+        self.assertGreaterEqual(len(dataset["inventory"]), 60)
+        self.assertGreaterEqual(len(dataset["demand_history"]), 3_000)
         for batch in dataset["inventory"]:
             self.assertIn(batch["hospital_id"], hospital_ids)
             self.assertIn(batch["supply_id"], supply_ids)
@@ -35,7 +35,7 @@ class IntelligenceTests(unittest.TestCase):
         self.assertEqual(_risk(RISK_THRESHOLDS["medium_days"] + 1, 0.99), "LOW")
 
     def test_outbreak_increases_demand_and_moves_safety_breach_earlier(self) -> None:
-        target_key = ("H003", "MED001")
+        target_key = ("H001", "MED001")
         rows = {}
         for scenario in ("normal", "outbreak"):
             result = analyze(build_dataset(scenario))
@@ -79,14 +79,14 @@ class IntelligenceTests(unittest.TestCase):
                 self.assertEqual(sum(batch["quantity"] for batch in item["source_batch_allocations"]), item["recommended_quantity"])
             transfers_by_scenario[scenario] = next(
                 item for item in analysis["transfers"]
-                if item["source_hospital_id"] == "H001" and item["destination_hospital_id"] == "H003" and item["supply_id"] == "MED001"
+                if item["source_hospital_id"] == "H002" and item["destination_hospital_id"] == "H001" and item["supply_id"] == "MED001"
             )
         self.assertNotEqual(transfers_by_scenario["normal"]["recommended_quantity"], transfers_by_scenario["outbreak"]["recommended_quantity"])
         self.assertLessEqual(transfers_by_scenario["outbreak"]["recommended_quantity"], transfers_by_scenario["outbreak"]["destination_need"])
 
     def test_priority_components_are_explainable_and_sum_to_score(self) -> None:
         analysis = analyze(build_dataset("outbreak"))
-        item = next(row for row in analysis["priorities"] if row["hospital_id"] == "H003" and row["supply_id"] == "MED001")
+        item = next(row for row in analysis["priorities"] if row["hospital_id"] == "H001" and row["supply_id"] == "MED001")
         self.assertEqual(sum(item["score_components"].values()), item["priority_score"])
         self.assertIn("alternative_availability", item["score_components"])
         self.assertIn("supply_criticality", item["score_components"])

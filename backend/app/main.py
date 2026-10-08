@@ -301,7 +301,7 @@ def network_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[st
         "source_hospital_id": item["source_hospital_id"], "source": item["source_hospital"],
         "destination_hospital_id": item["destination_hospital_id"], "destination": item["destination_hospital"],
         "supply": item["supply"], "quantity": item["recommended_quantity"],
-        "transport_hours": item["estimated_transport_hours"], "priority_score": item["priority_score"],
+        "transport_hours": item["estimated_transport_hours"], "distance_km": item["distance_km"], "priority_score": item["priority_score"],
     } for item in analysis["transfers"] if user.get("role") == "network_admin" or item["destination_hospital_id"] == user["hospital_id"]][:20]
     return envelope({"nodes": nodes, "edges": edges}, node_count=len(nodes), edge_count=len(edges))
 
@@ -396,8 +396,9 @@ def forecast(hospital_id: str | None = None, supply_id: str = "MED001", horizon_
 
 
 @app.post("/api/forecast/run")
-def run_forecast(payload: ForecastRun) -> dict[str, Any]:
-    return forecast(payload.hospital_id, payload.supply_id, payload.horizon_days)
+def run_forecast(payload: ForecastRun, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    hospital_id = user["hospital_id"] if user.get("role") != "network_admin" else payload.hospital_id
+    return forecast(hospital_id, payload.supply_id, payload.horizon_days, user)
 
 
 @app.get("/api/shortages")
@@ -423,24 +424,24 @@ def redistribution(user: dict[str, Any] = Depends(get_current_user)) -> dict[str
 
 
 @app.get("/api/redistribution/{recommendation_id}")
-def redistribution_detail(recommendation_id: str) -> dict[str, Any]:
-    item = next((row for row in get_redistribution_recommendations() if row["recommendation_id"] == recommendation_id), None)
+def redistribution_detail(recommendation_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    item = next((row for row in scoped_analysis(user)["transfers"] if row["recommendation_id"] == recommendation_id), None)
     if not item:
         raise HTTPException(status_code=404, detail="Recommendation not found")
     return envelope({**item, "status": action_status.get(recommendation_id, item["status"])})
 
 
 @app.post("/api/redistribution/{recommendation_id}/approve")
-def approve_transfer(recommendation_id: str) -> dict[str, Any]:
-    if not any(row["recommendation_id"] == recommendation_id for row in get_redistribution_recommendations()):
+def approve_transfer(recommendation_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    if not any(row["recommendation_id"] == recommendation_id for row in scoped_analysis(user)["transfers"]):
         raise HTTPException(status_code=404, detail="Recommendation not found")
     action_status[recommendation_id] = "approved"
     return envelope(ActionResult(status="approved", recommendation_id=recommendation_id).model_dump())
 
 
 @app.post("/api/redistribution/{recommendation_id}/reject")
-def reject_transfer(recommendation_id: str) -> dict[str, Any]:
-    if not any(row["recommendation_id"] == recommendation_id for row in get_redistribution_recommendations()):
+def reject_transfer(recommendation_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    if not any(row["recommendation_id"] == recommendation_id for row in scoped_analysis(user)["transfers"]):
         raise HTTPException(status_code=404, detail="Recommendation not found")
     action_status[recommendation_id] = "rejected"
     return envelope(ActionResult(status="rejected", recommendation_id=recommendation_id).model_dump())
