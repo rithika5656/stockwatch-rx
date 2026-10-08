@@ -11,7 +11,14 @@ function markerTone(hospital) {
   return '#8fe000'
 }
 
-async function fetchRoadRoute(source, destination) {
+async function fetchRoadRoute(source, destination, edge) {
+  if (edge.route?.length > 1) {
+    return {
+      coordinates: edge.route,
+      distanceKm: edge.route_distance_km,
+      durationMinutes: edge.estimated_eta_minutes,
+    }
+  }
   const route = await get('/routes', { source_hospital_id: source.hospital_id, destination_hospital_id: destination.hospital_id })
   return {
     coordinates: route.coordinates,
@@ -59,7 +66,7 @@ export default function NetworkFlow({ refresh = 0 }) {
 
     let active = true
     setRouteDetails({ loading: true, error: '', coordinates: [], distanceKm: null, durationMinutes: null })
-    fetchRoadRoute(source, destination)
+    fetchRoadRoute(source, destination, selected)
       .then((result) => {
         if (!active) return
         setRouteDetails({ loading: false, error: '', coordinates: result.coordinates, distanceKm: result.distanceKm, durationMinutes: result.durationMinutes })
@@ -108,13 +115,13 @@ export default function NetworkFlow({ refresh = 0 }) {
               if (!source || !destination) return null
               const active = selectedRoute === edge.recommendation_id
                       if (!active || selectedRoadPath.length < 2) return null
-                      return <Polyline key={edge.recommendation_id} positions={selectedRoadPath} pathOptions={{ color: '#b6ff00', weight: 5, opacity: 0.95 }} eventHandlers={{ click: () => setSelectedRoute(edge.recommendation_id) }} />
+                      return <Polyline key={edge.recommendation_id} positions={selectedRoadPath} pathOptions={{ color: edge.fulfillment_leg_id ? '#4fe3a0' : '#b6ff00', weight: 5, opacity: 0.95 }} eventHandlers={{ click: () => setSelectedRoute(edge.recommendation_id) }} />
             })}
             {nodes.map((node) => { const tone = markerTone(node); return <CircleMarker key={node.hospital_id} center={[node.latitude, node.longitude]} radius={node.critical_shortages ? 10 : 8} pathOptions={{ color: tone, fillColor: tone, fillOpacity: .86, weight: 2 }}><Popup><div className="map-popup"><strong>{node.display_name || node.name}</strong><span>{node.address}</span><b>{node.critical_shortages ? 'CRITICAL SHORTAGE' : node.roles.join(' · ')}</b><small>{node.shortage_units.toLocaleString()} projected need · {node.surplus_units.toLocaleString()} shareable</small></div></Popup></CircleMarker> })}
           </MapContainer></div>
         <div className="network-counts"><span><i className="surplus" />{surplusCount} surplus nodes</span><span><i className="shortage" />{shortageCount} shortage nodes</span><span><i className="expiry" />{expiryCount} expiry-risk nodes</span></div>
       </div>
-      <div className="network-routes"><div className="network-routes-title"><MapPin size={15} /><strong>Opt-in supply matches</strong></div>{edges.slice(0, 5).map((edge) => <article className={`network-route ${selectedRoute === edge.recommendation_id ? 'selected-route' : ''}`} key={edge.recommendation_id} onClick={() => setSelectedRoute(edge.recommendation_id)}><div className="network-route-top"><span>{edge.supply}</span><b>{edge.priority_score}/100</b></div><div className="network-route-flow"><div><strong>{edge.source_hospital_id}</strong><small>{edge.source}</small></div><ArrowRight size={15} /><div><strong>{edge.destination_hospital_id}</strong><small>{edge.destination}</small></div></div><div className="network-route-bottom"><span>{edge.quantity.toLocaleString()} shareable units</span><span>{selectedRoute === edge.recommendation_id ? routeDetails.loading ? 'Checking OSRM...' : routeDetails.error ? 'Route unverified' : `${routeDetails.distanceKm?.toFixed(1)} km · ${routeDetails.durationMinutes} min` : 'Select to check route'}</span></div></article>)}</div>
+      <div className="network-routes"><div className="network-routes-title"><MapPin size={15} /><strong>Supply routes · OSRM</strong></div>{edges.slice(0, 8).map((edge) => <article className={`network-route ${selectedRoute === edge.recommendation_id ? 'selected-route' : ''}`} key={edge.recommendation_id} onClick={() => setSelectedRoute(edge.recommendation_id)}><div className="network-route-top"><span>{edge.supply}</span><b>{edge.fulfillment_leg_id ? edge.leg_status.replaceAll('_', ' ') : `${edge.priority_score}/100`}</b></div><div className="network-route-flow"><div><strong>{edge.source_hospital_id}</strong><small>{edge.source}</small></div><ArrowRight size={15} /><div><strong>{edge.destination_hospital_id}</strong><small>{edge.destination}</small></div></div><div className="network-route-bottom"><span>{edge.quantity.toLocaleString()} units{edge.fulfillment_leg_id ? ' · committed leg' : ' · shareable'}</span><span>{selectedRoute === edge.recommendation_id ? routeDetails.loading ? 'Checking OSRM...' : routeDetails.error ? 'Route unverified' : `${routeDetails.distanceKm?.toFixed(1)} km · ${routeDetails.durationMinutes} min` : 'Select to check route'}</span></div></article>)}</div>
     </div>
     <div className="network-footnote"><Network size={14} /><span>{routeHeadline}</span></div>
   </section>

@@ -422,4 +422,153 @@
 @media (max-width: 780px) { .forecast-component-grid { grid-template-columns: repeat(2,minmax(0,1fr)); } }
 @media (max-width: 900px) { .what-if-controls { grid-template-columns: repeat(2,minmax(0,1fr)); }.what-if-controls .button { grid-column: span 2; } }
 @media (max-width: 600px) { .impact-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); }.impact-metrics>div:nth-child(2) { border: 0; }.pool-row { flex-wrap: wrap; }.pool-row>div { flex-basis: calc(55% - 15px); }.pool-row>strong { flex: 1; }.pool-row>.button { width: 100%; }.nearby-match-route { flex-wrap: wrap; gap: 10px 16px; }.nearby-match-footer { align-items: flex-start; flex-direction: column; }.report-summary-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }.report-actions { width: 100%; }.report-actions .button { flex: 1; } }
+
+body {
+  background:
+    radial-gradient(circle at top left, rgba(31, 127, 98, 0.12), transparent 28%),
+    radial-gradient(circle at bottom right, rgba(19, 72, 61, 0.1), transparent 30%),
+    #edf4f1;
+}
+
+.app-shell {
+  animation: fadeInUp 0.45s ease-out both;
+}
+
+.panel,
+.kpi-card,
+.scenario-banner,
+.report-card,
+.dashboard-weekly-summary,
+.priority-callout,
+.table-panel,
+.schedule-form-panel,
+.share-pool-form,
+.chat-panel,
+.judge-analysis-panel,
+.nearby-match,
+.what-if-panel {
+  animation: riseIn 0.45s ease both;
+}
+
+.panel,
+.kpi-card,
+.report-card,
+.schedule-form-panel,
+.share-pool-form,
+.chat-panel,
+.nearby-match,
+.what-if-panel,
+.dashboard-weekly-summary,
+.priority-callout,
+.judge-analysis-panel {
+  position: relative;
+  overflow: hidden;
+}
+
+.panel::before,
+.kpi-card::before,
+.priority-callout::before,
+.nearby-match::before,
+.what-if-panel::before,
+.judge-analysis-panel::before,
+.scenario-banner::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(120deg, transparent 0%, rgba(255,255,255,0.55) 48%, transparent 100%);
+  transform: translateX(-100%);
+  animation: shimmer 6s linear infinite;
+  pointer-events: none;
+}
+
+.nav-link,
+.button,
+.icon-button,
+.workspace-chip,
+.brand-mark,
+.kpi-card,
+.panel,
+.risk-badge,
+.transfer-row,
+.surgery-row,
+.pool-row,
+.schedule-form-panel,
+.share-pool-form,
+.chat-panel,
+.judge-run-button {
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
+}
+
+.nav-link:hover,
+.button:hover,
+.icon-button:hover,
+.kpi-card:hover,
+.panel:hover,
+.workspace-chip:hover,
+.brand-mark:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(19, 53, 43, 0.08);
+}
+
+.kpi-card::after,
+.judge-run-button::after {
+  content: '';
+  position: absolute;
+  inset: auto 12% 0 12%;
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, transparent, rgba(34, 142, 109, 0.8), transparent);
+  opacity: 0.85;
+}
+
+.judge-run-button {
+  animation: pulseGlow 2.1s ease-in-out infinite;
+}
+
+.brand-mark,
+.workspace-avatar,
+.user-avatar,
+.chat-avatar,
+.collapse-button,
+.nav-link.active {
+  animation: softPulse 2.8s ease-in-out infinite;
+}
+
+.risk-badge,
+.status-dot,
+.demo-label i,
+.notification-button i {
+  animation: pulseDot 1.8s ease-in-out infinite;
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(12px) scale(0.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes shimmer {
+  0% { transform: translateX(-120%); }
+  100% { transform: translateX(120%); }
+}
+
+@keyframes pulseGlow {
+  0%, 100% { box-shadow: 0 0 0 rgba(23, 110, 85, 0), 0 6px 18px rgba(23, 110, 85, 0.14); }
+  50% { box-shadow: 0 0 0 6px rgba(23, 110, 85, 0.08), 0 10px 20px rgba(23, 110, 85, 0.23); }
+}
+
+@keyframes softPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+@keyframes pulseDot {
+  0%, 100% { opacity: 0.9; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.18); }
+}
+
 @media print { body { background: #fff!important; color: #172c27!important; }.sidebar,.topbar,.page-footer,.page-heading>.report-actions,.report-period,.judge-run-button { display: none!important; }.main-column { width: 100%!important; margin: 0!important; }.page-main { max-width: none!important; padding: 0!important; }.weekly-report-print { color: #172c27!important; }.weekly-report-print .panel,.report-summary-item { break-inside: avoid; box-shadow: none!important; }.weekly-report-print .data-table th { position: static; }.weekly-report-print .prototype-disclaimer { color: #46574e; background: #fff; } }

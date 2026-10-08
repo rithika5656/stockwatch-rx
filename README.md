@@ -14,7 +14,8 @@ Hospitals can hold excess stock while nearby facilities approach a stock-out, an
 - `backend/app/demo_data.py`: reproducible synthetic operational data for three public Coimbatore hospital locations.
 - `backend/app/engine.py`: historical-demand prototype forecast, scheduled-surgery demand adjustment, daily depletion simulation, FEFO expiry exposure, explainable priorities, and opt-in transfer optimisation.
 - `backend/app/main.py`: FastAPI routes and rule-based assistant backed by analysis functions.
-- `backend/app/database.py`: MongoDB source records for hospitals, inventory, demand, surgery schedules, and shareable pools; derived analysis persistence and demo fallback.
+- `backend/app/fulfillment.py`: parent supply requests, dynamically re-matched source legs, FEFO allocations, commitments, dispatch, delivery, rejection, and failure recovery.
+- `backend/app/database.py`: MongoDB source records plus durable request/leg records, conditional share-pool and batch commitments, derived analysis persistence, and demo fallback.
 - `backend/app/routing.py`: OSRM road geometry, distance, and ETA lookup with explicit unavailable-route handling.
 - `frontend/src/App.jsx`: responsive React dashboard and routed operational pages.
 - `frontend/src/services/api.js`: Axios client for the FastAPI service.
@@ -27,13 +28,16 @@ The forecast is labelled **Prototype Forecast** and uses a weighted moving avera
 
 - Three publicly mapped facilities: KMCH, PSG Hospitals, and Kumaran Medical Center. Coordinates and addresses are configured once in the backend seed data.
 - 13 supplies, 78 inventory batches, and 3,510 synthetic daily demand observations.
-- Five demo scenarios: normal operations, outbreak surge, critical shortage, expiry crisis, and redistribution opportunity.
+- Six demo scenarios: normal operations, outbreak surge, critical shortage, expiry crisis, redistribution opportunity, and a KMCH-to-PSG transfer demonstration.
 - Demand forecasts, projected days-to-stock-out, and shortage risk.
 - Batch-level expected expiry waste and recommended rotation.
 - Surgery schedule create/edit/cancel, non-persistent what-if forecast simulation, and schedule-linked demand/risk explanations.
 - Hospital-controlled shareable pools. Nearby hospitals see only enabled supply and quantity; source inventory, safety reserves, and unshared supplies are private.
 - Non-persistent transfer what-if simulation for sharing on/off, shareable quantity, and ETA delay; the result is not written to hospital settings.
 - FEFO lot allocation and expiry-aware transfer feasibility. Transfer amounts are bounded by shareable quantity, source surplus after reserve, destination need, eligible source lots, and supply-specific transfer caps.
+- Dynamic Multi-Source Fulfilment: one parent request tracks the total need while multiple source legs commit partial amounts; accepting, rejecting, or failing a leg automatically recalculates and re-matches remaining demand.
+- COMMITTED share-pool and batch quantities are reserved with conditional MongoDB updates, preventing the same opted-in stock or FEFO lots from being committed twice. Dispatch consumes the reserved batches and reduces the source pool; failed pre-dispatch legs release their reservations.
+- Per-leg OSRM route, distance, ETA, status, and FEFO batch traceability, shown in fulfillment progress and the existing Leaflet network map.
 - OSRM road geometry/distance/ETA; no-route or provider failure leaves transfer feasibility unverified and does not draw a fabricated road path.
 - Weekly management report with calculated shortages, surgeries, transfers, expiry risks, management actions, CSV export, and browser print-to-PDF.
 - Configurable priority and redistribution score weights with returned component values and penalties.
@@ -114,8 +118,9 @@ The default is **Outbreak Surge**, so the judge lands on the core risk story:
 2. Login as H001 (KMCH), add a future surgery schedule, and use **Simulate forecast** to compare the historical/model baseline with surgery-adjusted demand, risk, and safety-stock timing.
 3. Login as H002 (PSG Hospitals) and manage the Normal Saline shareable pool. H001 sees only the enabled quantity, never H002's inventory or reserve.
 4. Review Nearby Hospitals or Supply Map. A route is feasible only after OSRM returns geometry and its ETA meets the predicted safety-stock deadline.
-5. Open Weekly Management Report to review dynamically calculated actions and export CSV or print to PDF.
-6. Click **Run Intelligence Analysis** to recalculate forecasts, shortage, expiry, and transfer candidates. Transfer approval state remains in memory for this process.
+5. Select **KMCH to PSG transfer demo** to inspect a synthetic, safety-checked 578-unit KMCH → PSG Normal Saline transfer; its route origin and destination follow those same hospital IDs.
+6. Open Weekly Management Report to review dynamically calculated actions and export CSV or print to PDF.
+7. Click **Run Intelligence Analysis** to recalculate forecasts, shortage, expiry, and transfer candidates. Transfer approval state remains in memory for this process.
 
 ## API
 
@@ -137,6 +142,8 @@ All application routes are under `/api` and return `{ "data": ..., "meta": ... }
 - `GET /expiry-risks`
 - `GET /redistribution`, `GET /redistribution/{recommendation_id}`
 - `POST /redistribution/{recommendation_id}/approve`, `POST /redistribution/{recommendation_id}/reject`
+- `GET/POST /supply-requests`, `DELETE /supply-requests/{request_id}`
+- `POST /supply-requests/{request_id}/legs/{leg_id}/accept`, `/reject`, `/status`, `/fail`
 - `GET /prioritisation`
 - `GET /alerts`
 - `POST /assistant/query`
@@ -147,7 +154,7 @@ All application routes are under `/api` and return `{ "data": ..., "meta": ... }
 
 - Hospital identities/locations are based on OpenStreetMap public data (OpenStreetMap contributors, ODbL). Inventory, demand, surgeries, patient load, stock-out, expiry, and transfer data are synthetic and are not supplied by those hospitals.
 - Forecast probabilities and scores are demonstrative heuristics, not validated predictive or clinical models.
-- Surgery schedules and pool preferences use MongoDB source collections when MongoDB is enabled; in demo-only mode they are held in process memory. Approval/rejection state remains in memory and resets on restart; transfer execution is not connected to logistics.
+- Surgery schedules and pool preferences use MongoDB source collections when MongoDB is enabled; fulfillment requests, legs, and stock commitments use dedicated MongoDB collections in that mode. In demo-only mode, workflow state is process memory and resets on restart. Dispatch/delivery actions are simulated workflow updates and are not connected to external logistics.
 - The public OSRM demo endpoint has availability and usage limits. Configure `OSRM_ROUTING_URL` for a production routing service; if routing is unavailable, the app marks feasibility unverified rather than substituting straight-line distance.
 - MongoDB scenario/derived persistence code is implemented, but no live MongoDB URI or service was available for connection testing in this workspace.
 - A production deployment should add authentication/authorization, audit events, durable workflow state, transport/vendor constraints, input validation against operational feeds, model evaluation, and monitoring with domain experts.

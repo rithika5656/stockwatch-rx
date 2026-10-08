@@ -70,8 +70,8 @@ function Shell() {
       <div className="sidebar-bottom"><div className="sidebar-status"><i className="status-dot" /><div><strong>{authUser.hospital_id} · Operational</strong><small>Hospital session active</small></div></div><div className="demo-label">DEMO MODE <i /></div><button className="collapse-button" onClick={() => { window.localStorage.removeItem('stockwatch_session'); window.localStorage.removeItem('stockwatch_user'); setAuthUser(null) }}><LogOut size={15} /><span>Sign out</span></button></div>
     </aside>
     {mobile && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setMobile(false)} />}
-    <div className="main-column"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobile(true)}><Menu size={20} /></button><div className="breadcrumb"><span>STOCKWATCH-RX</span><ChevronRight size={14} /><strong>{titles[location.pathname] || titles['/dashboard']}</strong></div><div className="topbar-actions"><label className="scenario-select"><span>DEMO SCENARIO</span><select value={scenario} onChange={selectScenario} aria-label="Choose demo scenario"><option value="normal">Normal operations</option><option value="outbreak">Outbreak surge</option><option value="critical">Critical shortage</option><option value="expiry">Expiry crisis</option><option value="redistribution">Redistribution opportunity</option></select><ChevronDown size={14} /></label><span className="header-status"><i className="status-dot" />Operational</span><button className="icon-button notification-button" aria-label="Notifications"><Bell size={18} /><i /></button><div className="user-avatar">DR</div></div></header>
-      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} authUser={authUser} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="/surgeries" element={<SurgerySchedule refresh={refresh} authUser={authUser} />} /><Route path="/shareable-pool" element={<ShareablePool refresh={refresh} />} /><Route path="/weekly-report" element={<WeeklyReport refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local teams</span></footer></main>
+    <div className="main-column"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobile(true)}><Menu size={20} /></button><div className="breadcrumb"><span>STOCKWATCH-RX</span><ChevronRight size={14} /><strong>{titles[location.pathname] || titles['/dashboard']}</strong></div><div className="topbar-actions"><label className="scenario-select"><span>DEMO SCENARIO</span><select value={scenario} onChange={selectScenario} aria-label="Choose demo scenario"><option value="normal">Normal operations</option><option value="outbreak">Outbreak surge</option><option value="critical">Critical shortage</option><option value="expiry">Expiry crisis</option><option value="redistribution">Redistribution opportunity</option><option value="kmch_to_psg">KMCH to PSG transfer demo</option></select><ChevronDown size={14} /></label><span className="header-status"><i className="status-dot" />Operational</span><button className="icon-button notification-button" aria-label="Notifications"><Bell size={18} /><i /></button><div className="user-avatar">DR</div></div></header>
+      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} authUser={authUser} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} authUser={authUser} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="/surgeries" element={<SurgerySchedule refresh={refresh} authUser={authUser} />} /><Route path="/shareable-pool" element={<ShareablePool refresh={refresh} />} /><Route path="/weekly-report" element={<WeeklyReport refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local teams</span></footer></main>
     </div>
   </div>
 }
@@ -134,7 +134,7 @@ function NearbyPage({ refresh, hospitalId }) {
   async function requestTransfer(item) {
     try {
       const result = await post(`/redistribution/${item.recommendation_id}/request`)
-      setRequested((current) => ({ ...current, [item.recommendation_id]: result.status }))
+      setRequested((current) => ({ ...current, [item.recommendation_id]: `${result.status} · ${result.request_id}` }))
       setRequestError('')
     } catch (error) {
       setRequestError(getErrorMessage(error))
@@ -179,7 +179,7 @@ function Dashboard({ refresh, scenarioLabel, authUser }) {
   </>
 }
 
-function TransferRow({ item, compact, decide }) { return <div className={`transfer-row ${compact ? 'compact' : ''}`}><div className="transfer-route"><div className="transfer-facility"><i className="route-dot source" /><strong>{item.source_hospital}</strong></div><div className="transfer-arrow"><span>{item.recommended_quantity.toLocaleString()} units</span><ArrowRight size={15} /></div><div className="transfer-facility"><i className="route-dot destination" /><strong>{item.destination_hospital}</strong></div></div><div className="transfer-meta"><div className="transfer-supply"><strong>{item.supply}</strong><span>{item.road_distance_km == null ? 'Road route unverified' : `${item.road_distance_km} km road · ${item.estimated_transport_minutes} min ETA`} · {item.destination_expected_coverage_days}d cover after</span></div><Badge value={item.priority} /><span className={`feasibility-tag ${item.transfer_feasible ? 'feasible' : 'not-feasible'}`}>{item.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE'}</span>{decide && <span className="transfer-actions"><button className="button button-approve" disabled={!item.transfer_feasible} onClick={() => decide(item.recommendation_id, 'approve')}><Check size={14} />Approve</button><button className="icon-button" onClick={() => decide(item.recommendation_id, 'reject')} aria-label="Reject"><X size={16} /></button></span>}</div><p className="transfer-reason">{item.reason} {item.feasibility_reason}</p></div> }
+function TransferRow({ item, compact, decide }) { return <div className={`transfer-row ${compact ? 'compact' : ''}`}><div className="transfer-route"><div className="transfer-facility source"><i className="route-dot source" /><strong>{item.source_hospital || 'Source unavailable'}</strong></div><div className="transfer-arrow"><span>{item.recommended_quantity.toLocaleString()} units</span><ArrowRight size={15} aria-label="to" /></div><div className="transfer-facility destination"><i className="route-dot destination" /><strong>{item.destination_hospital || 'Destination unavailable'}</strong></div></div><div className="transfer-meta"><div className="transfer-supply"><strong>{item.supply}</strong><span>{item.road_distance_km == null ? 'Road route unverified' : `${item.road_distance_km} km road · ${item.estimated_transport_minutes} min ETA`} · {item.destination_expected_coverage_days}d cover after</span></div><Badge value={item.priority} /><span className={`feasibility-tag ${item.transfer_feasible ? 'feasible' : 'not-feasible'}`}>{item.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE'}</span>{decide && <span className="transfer-actions"><button className="button button-approve" disabled={!item.transfer_feasible} onClick={() => decide(item.recommendation_id, 'approve')}><Check size={14} />Approve</button><button className="icon-button" onClick={() => decide(item.recommendation_id, 'reject')} aria-label="Reject"><X size={16} /></button></span>}</div><p className="transfer-reason">{item.reason} {item.feasibility_reason}</p></div> }
 function Badge({ value }) { return <span className={`risk-badge ${(value || 'low').toLowerCase()}`}><i />{value || 'LOW'}</span> }
 function Health({ score }) { const tone = score < 50 ? 'red' : score < 70 ? 'amber' : 'green'; return <div className="health-meter"><div><i className={tone} style={{ width: `${score}%` }} /></div><strong>{score}</strong></div> }
 
@@ -292,9 +292,31 @@ function ShareablePool({ refresh }) {
   const { data, loading } = useApiData('/shareable-pool', refresh + revision)
   const rows = data || []
   const selected = rows.find((row) => row.supply_id === supplyId)
+  useEffect(() => {
+    if (!selected) return
+    setQuantity(String(selected.shareable_quantity || 0))
+    setEnabled(Boolean(selected.enabled))
+  }, [selected?.supply_id])
+  const maximumShareable = selected?.maximum_allowed_shareable ?? 0
+  const requestedQuantity = quantity === '' ? NaN : Number(quantity)
+  const quantityError = quantity === ''
+    ? 'Enter a shareable quantity.'
+    : requestedQuantity < 0
+      ? 'Shareable quantity cannot be negative.'
+      : !Number.isInteger(requestedQuantity)
+        ? 'Shareable quantity must be a whole number.'
+        : maximumShareable === 0 && requestedQuantity > 0
+        ? 'No safe surplus is currently available to share.'
+        : enabled && requestedQuantity > maximumShareable
+          ? `Maximum shareable quantity is ${maximumShareable.toLocaleString()} units.`
+          : ''
 
   async function save(event) {
     event.preventDefault()
+    if (quantityError || (enabled && maximumShareable === 0)) {
+      setError(quantityError || 'No safe surplus is currently available to share.')
+      return
+    }
     setBusy(true)
     setError('')
     try {
@@ -318,16 +340,17 @@ function ShareablePool({ refresh }) {
     <Heading title="Shareable pool" description="Your facility chooses which surplus quantities are visible to nearby hospitals. Internal stock and safety reserves remain private." />
     <div className="share-pool-layout">
       <section className="panel share-pool-form"><PanelHeading title="Configure supply sharing" eyebrow="OPT-IN CONTROL" />
-        <form className="schedule-form" onSubmit={save}>
+        <form className="schedule-form" noValidate onSubmit={save}>
           <Select label="Medical supply" value={supplyId} change={choose} options={rows.map((row) => [row.supply_id, row.supply])} />
           {selected && <div className="share-private-summary"><Detail label="Total stock · private" value={`${selected.total_stock.toLocaleString()} units`} /><Detail label="Protected reserve · private" value={`${selected.safety_reserve.toLocaleString()} units`} /><Detail label="Available source surplus" value={`${selected.source_surplus.toLocaleString()} units`} /></div>}
-          <label className="filter-control"><span>Shareable quantity</span><input type="number" min="0" max={enabled ? selected?.source_surplus || 0 : undefined} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label className="filter-control"><span>Shareable quantity · max {maximumShareable.toLocaleString()}</span><input type="number" min="0" max={maximumShareable} step="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} aria-invalid={Boolean(quantityError)} aria-describedby="shareable-quantity-feedback" /></label>
           <label className="sharing-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Enable this supply in the local share pool</span></label>
+          <div id="shareable-quantity-feedback" className={`shareable-quantity-feedback ${quantityError ? 'invalid' : ''}`} aria-live="polite">{quantityError || (maximumShareable === 0 ? 'No safe surplus is currently available to share.' : `Up to ${maximumShareable.toLocaleString()} units are available after reserve and commitments.`)}</div>
           {error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}
-          <button className="button button-primary" disabled={busy || !selected}>{busy ? 'Updating pool...' : 'Save sharing preference'}<Check size={15} /></button>
+          <button className="button button-primary" disabled={busy || !selected || Boolean(quantityError) || (enabled && maximumShareable === 0)}>{busy ? 'Updating pool...' : 'Save sharing preference'}<Check size={15} /></button>
         </form>
       </section>
-      <section className="share-pool-list"><div className="schedule-list-heading"><div><span className="eyebrow">PRIVATE FACILITY VIEW</span><h2>Current pool settings</h2></div></div>{loading ? <Loading /> : rows.map((row) => <article className="panel pool-row" key={row.supply_id}><div><span className="eyebrow">{row.supply_id}</span><h3>{row.supply}</h3><small>{row.enabled ? 'SHAREABLE' : 'NOT SHAREABLE'}</small></div><strong>{row.enabled ? Math.min(row.shareable_quantity, row.source_surplus).toLocaleString() : '0'} <small>units visible to network</small></strong><button className="button button-secondary" onClick={() => choose(row.supply_id)}>Configure</button></article>)}</section>
+      <section className="share-pool-list"><div className="schedule-list-heading"><div><span className="eyebrow">PRIVATE FACILITY VIEW</span><h2>Current pool settings</h2></div></div>{loading ? <Loading /> : rows.map((row) => { const poolIsShareable = row.enabled && row.maximum_allowed_shareable > 0; return <article className="panel pool-row" key={row.supply_id}><div><span className="eyebrow">{row.supply_id}</span><h3>{row.supply}</h3><small>{poolIsShareable ? 'SHAREABLE' : 'NOT SHAREABLE'}</small></div><strong>{poolIsShareable ? Math.min(row.shareable_quantity, row.maximum_allowed_shareable).toLocaleString() : '0'} <small>units visible to network</small></strong><button className="button button-secondary" onClick={() => choose(row.supply_id)}>Configure</button></article> })}</section>
     </div>
     <p className="prototype-disclaimer">Only the enabled quantity is exposed to other hospitals. Inventory, demand, and pool quantities are simulated.</p>
   </>
@@ -416,12 +439,93 @@ function Shortages({ refresh }) { const { data, loading, error } = useApiData('/
 
 function Expiry({ refresh }) { const { data, loading, error } = useApiData('/expiry-risks', refresh); return <><Heading title="Expiry & waste" description="Expected remaining quantity by batch, projected through expiry." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Risk', (r) => <Badge value={r.risk_level} />], ['Hospital', (r) => r.hospital], ['Supply / batch', (r) => <Cell r={r.supply} sub={r.batch_id} />], ['Quantity', (r) => r.quantity.toLocaleString()], ['Expiry', (r) => `${r.expiry_date} · ${r.days_until_expiry}d`], ['Expected use', (r) => r.expected_usage.toLocaleString()], ['Expected waste', (r) => <strong className="critical-value">{r.expected_waste.toLocaleString()}</strong>], ['Action', (r) => r.recommended_action]]} /></section></> }
 
-function Transfers({ refresh }) {
-  const { data, loading, error } = useApiData('/redistribution', refresh)
-  const [statuses, setStatuses] = useState({})
+function FulfillmentProgressCard({ request, direction, authUser, updateLeg, cancelRequest }) {
+  const legs = request.visibleLegs || []
+  return <article className="panel fulfillment-request">
+    <header className="fulfillment-request-header">
+      <div><span className="eyebrow">{direction === 'incoming' ? 'INCOMING SUPPLY' : 'OUTGOING SUPPLY'} · {request.request_id}</span><h3>{request.supply}</h3></div>
+      <span className={`fulfillment-status ${request.status.toLowerCase()}`}>{request.status.replaceAll('_', ' ')}</span>
+    </header>
+    <div className="fulfillment-progress">
+      <div><strong>{request.fulfilled_quantity.toLocaleString()} <small>/ {request.requested_quantity.toLocaleString()} units</small></strong><span>{request.remaining_quantity.toLocaleString()} remaining · {request.matching_status.replaceAll('_', ' ')}</span></div>
+      <div className="fulfillment-progress-track"><i style={{ width: `${Math.min(100, request.fulfilled_quantity / request.requested_quantity * 100)}%` }} /></div>
+    </div>
+    {legs.length ? <div className="fulfillment-legs">{legs.map((leg) => <div className="fulfillment-leg" key={leg.leg_id}>
+      <div className="fulfillment-leg-route"><strong>{leg.source_hospital || 'Source unavailable'}</strong><ArrowRight size={15} /><strong>{leg.destination_hospital || 'Destination unavailable'}</strong><span className={`fulfillment-status ${leg.status.toLowerCase()}`}>{leg.status.replaceAll('_', ' ')}</span></div>
+      <div className="fulfillment-leg-meta"><b>{leg.allocated_quantity.toLocaleString()} units</b><span>{leg.route_distance_km} km road</span><span>ETA {leg.estimated_eta_minutes} min</span><span>{leg.route_provider}</span></div>
+      <small className="fulfillment-batches">FEFO batches: {leg.source_batch_allocations.map((batch) => `${batch.batch_id} · ${batch.quantity}`).join(' / ')}</small>
+      {leg.failure_reason && <small className="fulfillment-failure">{leg.failure_reason}</small>}
+      <div className="fulfillment-leg-actions">
+        {leg.status === 'OFFERED' && leg.source_hospital_id === authUser.hospital_id && <><button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'accept')}><Check size={14} />Accept & commit</button><button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'reject')}><X size={14} />Reject</button></>}
+        {leg.status === 'COMMITTED' && leg.source_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'IN_TRANSIT' })}><Truck size={14} />Dispatch</button>}
+        {leg.status === 'IN_TRANSIT' && leg.destination_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'DELIVERED' })}><Check size={14} />Confirm delivery</button>}
+        {['COMMITTED', 'IN_TRANSIT'].includes(leg.status) && <button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'fail', { reason: 'Source stock or route became unavailable.' })}>Report failure</button>}
+      </div>
+    </div>)}</div> : <div className="fulfillment-no-legs">No eligible source is currently offering this supply.</div>}
+    {direction === 'incoming' && !legs.some((leg) => ['DISPATCHING', 'IN_TRANSIT', 'DELIVERED'].includes(leg.status)) && !['CANCELLED', 'FULLY_FULFILLED'].includes(request.status) && <button className="button button-secondary fulfillment-cancel" onClick={() => cancelRequest(request.request_id)}>Cancel request</button>}
+  </article>
+}
+
+function Transfers({ refresh, authUser }) {
+  const [revision, setRevision] = useState(0)
+  const [supplyId, setSupplyId] = useState('MED001')
+  const [quantity, setQuantity] = useState('600')
+  const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
-  async function decide(id, action) { try { const result = await post(`/redistribution/${id}/${action}`); setStatuses((current) => ({ ...current, [id]: result.status })); setToast(`Transfer ${result.status}.`); setTimeout(() => setToast(''), 2500) } catch (error) { setToast(getErrorMessage(error)) } }
-  return <><Heading title="Redistribution queue" description="Only enabled share-pool quantities are offered; route feasibility is verified against OSRM road ETA." />{toast && <div className="toast-message"><Check size={15} />{toast}</div>}{error ? <Error message={error} /> : loading ? <Loading /> : !data?.length ? <div className="panel empty-state"><Truck size={20} /><strong>No transfer candidates</strong><span>There are no active local requests matched to an enabled share pool.</span></div> : <div className="recommendation-list">{data.map((item) => <article className="panel recommendation-panel" key={item.recommendation_id}><div className="recommendation-top"><div><span className="eyebrow">{item.recommendation_id}</span><h2>{item.supply}</h2></div><Badge value={item.priority} /></div><TransferRow item={item} decide={decide} /><div className="recommendation-details"><Detail label="Shareable quantity" value={`${item.shareable_quantity.toLocaleString()} units`} /><Detail label="Requested quantity" value={`${item.recommended_quantity.toLocaleString()} units`} /><Detail label="Road distance" value={item.road_distance_km == null ? 'Unverified' : `${item.road_distance_km} km`} /><Detail label="ETA" value={item.estimated_transport_minutes == null ? 'Unverified' : `${item.estimated_transport_minutes} minutes`} /><Detail label="Status" value={statuses[item.recommendation_id] || item.status} /></div><div className="action-status">{item.feasibility_reason}</div></article>)}</div>}</>
+  const [statuses, setStatuses] = useState({})
+  const { data, loading, error } = useApiData('/redistribution', refresh)
+  const { data: requests, loading: requestsLoading, error: requestsError } = useApiData('/supply-requests', refresh + revision)
+  const suppliesData = useApiData('/supplies', refresh).data || []
+  useEffect(() => {
+    const interval = window.setInterval(() => setRevision((value) => value + 1), 5000)
+    return () => window.clearInterval(interval)
+  }, [])
+  async function createRequest(event) {
+    event.preventDefault()
+    setBusy(true)
+    try {
+      const request = await post('/supply-requests', { supply_id: supplyId, requested_quantity: Number(quantity) })
+      setToast(`${request.request_id} matching started.`)
+      setRevision((value) => value + 1)
+    } catch (requestError) { setToast(getErrorMessage(requestError)) }
+    finally { setBusy(false) }
+  }
+  async function updateLeg(requestId, legId, action, body) {
+    try {
+      await post(`/supply-requests/${requestId}/legs/${legId}/${action}`, body)
+      setToast(action === 'accept' ? 'Stock committed. Matching the remaining need now.' : action === 'reject' ? 'Offer rejected. Searching the next eligible source.' : 'Fulfillment progress updated.')
+      setRevision((value) => value + 1)
+    } catch (requestError) { setToast(getErrorMessage(requestError)) }
+  }
+  async function cancelRequest(requestId) {
+    try { await remove(`/supply-requests/${requestId}`); setToast('Supply request cancelled.'); setRevision((value) => value + 1) }
+    catch (requestError) { setToast(getErrorMessage(requestError)) }
+  }
+  async function decideRecommendation(id, action) {
+    try {
+      const result = await post(`/redistribution/${id}/${action}`)
+      setStatuses((current) => ({ ...current, [id]: result.status }))
+      setToast(`Recommendation ${result.status}.`)
+    } catch (requestError) { setToast(getErrorMessage(requestError)) }
+  }
+  const incomingRequests = (requests || []).filter((request) => request.destination_hospital_id === authUser.hospital_id)
+    .map((request) => ({ ...request, visibleLegs: request.legs.filter((leg) => leg.destination_hospital_id === authUser.hospital_id) }))
+  const outgoingRequests = (requests || []).map((request) => ({
+    ...request,
+    visibleLegs: request.legs.filter((leg) => leg.source_hospital_id === authUser.hospital_id),
+  })).filter((request) => request.visibleLegs.length > 0)
+  return <><Heading title="Redistribution queue" description="Dynamic Multi-Source Fulfilment matches opt-in supply, commits partial quantities, and automatically searches again for the remaining need." />
+    <section className="panel fulfillment-create-panel"><div><span className="eyebrow">DYNAMIC MULTI-SOURCE FULFILMENT</span><h2>Request supply across the local network</h2><p>Each source commits only what it can safely provide. Remaining demand is re-matched immediately.</p></div><form className="fulfillment-create-form" onSubmit={createRequest}><label className="filter-control"><span>Medical supply</span><select value={supplyId} onChange={(event) => setSupplyId(event.target.value)}>{suppliesData.map((item) => <option key={item.supply_id} value={item.supply_id}>{item.name}</option>)}</select></label><label className="filter-control"><span>Total required units</span><input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><button className="button button-primary" disabled={busy || !suppliesData.length}>{busy ? 'Matching sources...' : 'Create supply request'}<ArrowRight size={15} /></button></form></section>
+    {toast && <div className="toast-message"><Check size={15} />{toast}</div>}
+    <section className="fulfillment-section"><div className="fulfillment-section-heading"><div><span className="eyebrow">MY HOSPITAL · {authUser.hospital_name}</span><h2>Incoming and outgoing supplies</h2></div><span className="fulfillment-live"><i className="status-dot" />RE-MATCHING ACTIVE</span></div>
+      {!requestsError && !requestsLoading && requests?.length > 0 && <div className="fulfillment-direction-groups">
+        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>INCOMING</h3><span>Destination is {authUser.hospital_name}</span></div>{incomingRequests.length ? <div className="fulfillment-request-list directional">{incomingRequests.map((request) => <FulfillmentProgressCard key={`incoming-${request.request_id}`} request={request} direction="incoming" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} />)}</div> : <div className="fulfillment-direction-empty">No incoming supply requests.</div>}</section>
+        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>OUTGOING</h3><span>Source is {authUser.hospital_name}</span></div>{outgoingRequests.length ? <div className="fulfillment-request-list directional">{outgoingRequests.map((request) => <FulfillmentProgressCard key={`outgoing-${request.request_id}`} request={request} direction="outgoing" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} />)}</div> : <div className="fulfillment-direction-empty">No outgoing transfers.</div>}</section>
+      </div>}
+      {requestsError ? <Error message={requestsError} /> : requestsLoading ? <Loading /> : !requests?.length ? <div className="panel empty-state"><Truck size={20} /><strong>No supply requests yet</strong><span>New requests will appear here with each source leg, route, ETA, and committed quantity.</span></div> : <div className="fulfillment-request-list">{requests.map((request) => <article className="panel fulfillment-request" key={request.request_id}><header className="fulfillment-request-header"><div><span className="eyebrow">{request.request_id} · {request.destination_hospital}</span><h3>{request.supply}</h3></div><span className={`fulfillment-status ${request.status.toLowerCase()}`}>{request.status.replaceAll('_', ' ')}</span></header><div className="fulfillment-progress"><div><strong>{request.fulfilled_quantity.toLocaleString()} <small>/ {request.requested_quantity.toLocaleString()} units committed</small></strong><span>{request.remaining_quantity.toLocaleString()} remaining · {request.matching_status.replaceAll('_', ' ')}</span></div><div className="fulfillment-progress-track"><i style={{ width: `${Math.min(100, request.fulfilled_quantity / request.requested_quantity * 100)}%` }} /></div></div>{request.legs.length ? <div className="fulfillment-legs">{request.legs.map((leg) => <div className="fulfillment-leg" key={leg.leg_id}><div className="fulfillment-leg-route"><strong>{leg.source_hospital}</strong><ArrowRight size={15} /><strong>{leg.destination_hospital}</strong><span className={`fulfillment-status ${leg.status.toLowerCase()}`}>{leg.status.replaceAll('_', ' ')}</span></div><div className="fulfillment-leg-meta"><b>{leg.allocated_quantity.toLocaleString()} units</b><span>{leg.route_distance_km} km road</span><span>ETA {leg.estimated_eta_minutes} min</span><span>{leg.route_provider}</span></div><small className="fulfillment-batches">FEFO batches: {leg.source_batch_allocations.map((batch) => `${batch.batch_id} · ${batch.quantity}`).join(' / ')}</small>{leg.failure_reason && <small className="fulfillment-failure">{leg.failure_reason}</small>}<div className="fulfillment-leg-actions">{leg.status === 'OFFERED' && leg.source_hospital_id === authUser.hospital_id && <><button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'accept')}><Check size={14} />Accept & commit</button><button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'reject')}><X size={14} />Reject</button></>}{leg.status === 'COMMITTED' && leg.source_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'IN_TRANSIT' })}><Truck size={14} />Dispatch</button>}{leg.status === 'IN_TRANSIT' && leg.destination_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'DELIVERED' })}><Check size={14} />Confirm delivery</button>}{['COMMITTED', 'IN_TRANSIT'].includes(leg.status) && <button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'fail', { reason: 'Source stock or route became unavailable.' })}>Report failure</button>}</div></div>)}</div> : <div className="fulfillment-no-legs">No eligible source is currently offering this supply.</div>}{request.destination_hospital_id === authUser.hospital_id && !request.legs.some((leg) => ['IN_TRANSIT', 'DELIVERED'].includes(leg.status)) && !['CANCELLED', 'FULLY_FULFILLED'].includes(request.status) && <button className="button button-secondary fulfillment-cancel" onClick={() => cancelRequest(request.request_id)}>Cancel request</button>}</article>)}</div>}
+    </section>
+    <section className="fulfillment-section legacy-recommendations"><div className="fulfillment-section-heading"><div><span className="eyebrow">DECISION ENGINE</span><h2>Current transfer recommendations</h2></div></div>{error ? <Error message={error} /> : loading ? <Loading /> : !data?.length ? <div className="panel empty-state"><Truck size={20} /><strong>No transfer candidates</strong><span>No route-verified candidate currently meets source reserve and expiry constraints.</span></div> : <div className="recommendation-list">{data.map((item) => <article className="panel recommendation-panel" key={item.recommendation_id}><div className="recommendation-top"><div><span className="eyebrow">{item.recommendation_id}</span><h2>{item.supply}</h2></div><Badge value={item.priority} /></div><TransferRow item={item} decide={decideRecommendation} /><div className="recommendation-details"><Detail label="Available shareable" value={`${item.shareable_quantity.toLocaleString()} units`} /><Detail label="Suggested quantity" value={`${item.recommended_quantity.toLocaleString()} units`} /><Detail label="Road distance" value={item.road_distance_km == null ? 'Unverified' : `${item.road_distance_km} km`} /><Detail label="ETA" value={item.estimated_transport_minutes == null ? 'Unverified' : `${item.estimated_transport_minutes} minutes`} /><Detail label="Status" value={statuses[item.recommendation_id] || item.status} /></div><div className="action-status">{item.feasibility_reason}</div></article>)}</div>}</section>
+  </>
 }
 
 function Priorities({ refresh }) { const { data, loading, error } = useApiData('/prioritisation', refresh); return <><Heading title="Critical prioritisation" description="Transparent allocation scoring across emergency demand, patient load, stock-out urgency, alternatives, and criticality." /><section className="score-method"><strong>Priority score weights</strong><div className="weight-chips"><span>Emergency demand <b>35%</b></span><span>Patient load <b>25%</b></span><span>Stock-out urgency <b>20%</b></span><span>Alternative unavailable <b>10%</b></span><span>Supply criticality <b>10%</b></span></div></section><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Priority', (r) => <Badge value={r.priority} />], ['Hospital', (r) => <Cell r={r.hospital} sub={`${r.days_until_stockout} days cover`} />], ['Supply', (r) => <Cell r={r.supply} sub={`${r.criticality} criticality`} />], ['Score', (r) => <Score value={r.priority_score} />], ['Probability', (r) => `${Math.round(r.shortage_probability * 100)}%`], ['Decision factors', (r) => r.reasons.join(' · ')]]} /></section><p className="method-disclaimer">Scores support operational review; they are not clinical triage.</p></> }

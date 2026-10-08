@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from . import database
+from . import database, fulfillment
 from .auth_service import login as login_user, user_from_token
 from .assistant_service import get_assistant_provider
 from .engine import RISK_ORDER, analyze
@@ -31,6 +31,7 @@ SCENARIOS = {
     "critical": "Critical shortage",
     "expiry": "Expiry crisis",
     "redistribution": "Redistribution opportunity",
+    "kmch_to_psg": "KMCH to PSG transfer demo",
 }
 scenario_key = "outbreak"
 action_status: dict[str, str] = {}
@@ -72,9 +73,22 @@ class SurgeryPayload(BaseModel):
 
 class ShareablePoolPayload(BaseModel):
     supply_id: str
-    shareable_quantity: int = Field(ge=0)
+    shareable_quantity: int
     enabled: bool = True
     valid_until: date | None = None
+
+
+class SupplyRequestPayload(BaseModel):
+    supply_id: str
+    requested_quantity: int = Field(ge=1, le=1_000_000)
+
+
+class FulfillmentFailurePayload(BaseModel):
+    reason: str = Field(default="", max_length=500)
+
+
+class FulfillmentStatusPayload(BaseModel):
+    status: str
 
 
 class ForecastSimulationPayload(BaseModel):
@@ -271,17 +285,33 @@ def _public_transfer(item: dict[str, Any], user_hospital_id: str) -> dict[str, A
         route_error = str(error.detail)
     deadline_minutes = int(item["days_until_stockout"] * 24 * 60) if "days_until_stockout" in item else None
     route_in_time = bool(route and (deadline_minutes is None or route["duration_minutes"] < deadline_minutes))
+    analysis = get_analysis()
+    source_forecast = next((row for row in analysis["forecasts"]
+                            if row["hospital_id"] == item["source_hospital_id"] and row["supply_id"] == item["supply_id"]), None)
+    pool = next((row for row in database.ACTIVE_DATA.get("shareable_pool", [])
+                 if row["hospital_id"] == item["source_hospital_id"] and row["supply_id"] == item["supply_id"]), None)
+    committed = int(pool.get("committed_quantity", 0)) if pool else 0
+    if source_forecast and pool:
+        reserve = source_forecast["safety_stock"] + source_forecast["forecast_daily_demand"] * min(7, max(2, source_forecast["supplier_lead_time"]))
+        safe_remaining = max(0, round(source_forecast["current_stock"] - reserve - committed))
+        pool_remaining = max(0, int(pool["shareable_quantity"]) - committed)
+        shareable_remaining = min(safe_remaining, pool_remaining)
+    else:
+        shareable_remaining = 0
+    quantity_remaining = min(int(item["recommended_quantity"]), shareable_remaining)
+    source_hospital = analysis["hospitals"].get(item["source_hospital_id"], {})
+    destination_hospital = analysis["hospitals"].get(item["destination_hospital_id"], {})
     return {
         "recommendation_id": item["recommendation_id"],
-        "source_hospital_id": item["source_hospital_id"], "source_hospital": item["source_hospital"],
-        "destination_hospital_id": item["destination_hospital_id"], "destination_hospital": item["destination_hospital"],
+        "source_hospital_id": item["source_hospital_id"], "source_hospital": source_hospital.get("display_name") or source_hospital.get("name") or "Source unavailable",
+        "destination_hospital_id": item["destination_hospital_id"], "destination_hospital": destination_hospital.get("display_name") or destination_hospital.get("name") or "Destination unavailable",
         "supply_id": item["supply_id"], "supply": item["supply"],
-        "recommended_quantity": item["recommended_quantity"],
-        "shareable_quantity": item.get("shareable_quantity", item["recommended_quantity"]),
+        "recommended_quantity": quantity_remaining,
+        "shareable_quantity": shareable_remaining,
         "priority_score": item["priority_score"], "priority": item["priority"],
         "road_distance_km": route["distance_km"] if route else None,
         "estimated_transport_minutes": route["duration_minutes"] if route else None,
-        "route_available": bool(route), "transfer_feasible": route_in_time,
+        "route_available": bool(route), "transfer_feasible": route_in_time and quantity_remaining > 0,
         "feasibility_reason": "Shareable quantity, destination need, safety reserve, FEFO, and road ETA pass current checks." if route_in_time else route_error or "Road ETA does not meet the predicted safety-stock deadline.",
         "reason": "This recommendation uses only the source hospital's enabled shareable pool. Internal stock and safety-reserve values are not disclosed.",
         "destination_expected_coverage_days": item["destination_expected_coverage_days"],
@@ -309,6 +339,31 @@ def startup() -> None:
     _cached_analysis = analyze(database.ACTIVE_DATA)
     _cached_data_id = id(database.ACTIVE_DATA)
     database.persist_analysis(_cached_analysis)
+
+
+def _shareable_capacity(analysis: dict[str, Any], hospital_id: str, supply_id: str,
+                        source: dict[str, Any] | None) -> dict[str, int]:
+    forecast = next((row for row in analysis["forecasts"]
+                     if row["hospital_id"] == hospital_id and row["supply_id"] == supply_id), None)
+    if not forecast:
+        return {"safety_reserve": 0, "committed_quantity": 0, "available_source_surplus": 0,
+                "eligible_inventory_quantity": 0, "maximum_allowed_shareable": 0}
+    committed = int(source.get("committed_quantity", 0)) if source else 0
+    reserve = round(forecast["safety_stock"] + forecast["forecast_daily_demand"]
+                    * min(7, max(2, forecast["supplier_lead_time"])))
+    available_surplus = max(0, round(forecast["current_stock"] - reserve - committed))
+    eligible_batches = [batch for batch in analysis["batches"].get((hospital_id, supply_id), [])
+                        if batch.get("batch_status") != "expired"
+                        and date.fromisoformat(batch["expiry_date"]) >= date.today()]
+    eligible_quantity = sum(max(0, int(batch["quantity"]) - int(batch.get("committed_quantity", 0)))
+                            for batch in eligible_batches)
+    return {
+        "safety_reserve": reserve,
+        "committed_quantity": committed,
+        "available_source_surplus": available_surplus,
+        "eligible_inventory_quantity": eligible_quantity,
+        "maximum_allowed_shareable": min(available_surplus, eligible_quantity),
+    }
 
 
 @app.get("/api/health")
@@ -411,13 +466,19 @@ def get_shareable_pool(user: dict[str, Any] = Depends(get_current_user)) -> dict
         if owner != hospital_id:
             continue
         source = next((row for row in database.ACTIVE_DATA.get("shareable_pool", []) if row["hospital_id"] == owner and row["supply_id"] == supply_id), None)
-        reserve = forecast_row["safety_stock"] + forecast_row["forecast_daily_demand"] * min(7, max(2, forecast_row["supplier_lead_time"]))
-        surplus = max(0, round(forecast_row["current_stock"] - reserve))
+        capacity = _shareable_capacity(analysis, owner, supply_id, source)
+        committed = capacity["committed_quantity"]
+        configured_quantity = int(source["shareable_quantity"]) if source else 0
+        available_shareable = min(max(0, configured_quantity - committed), capacity["maximum_allowed_shareable"])
         rows.append({
             "pool_id": source["pool_id"] if source else f"POOL-{owner}-{supply_id}",
             "hospital_id": owner, "supply_id": supply_id, "supply": supplies[supply_id]["name"],
-            "total_stock": forecast_row["current_stock"], "safety_reserve": round(reserve), "source_surplus": surplus,
-            "shareable_quantity": int(source["shareable_quantity"]) if source else 0,
+            "total_stock": forecast_row["current_stock"], "safety_reserve": capacity["safety_reserve"],
+            "source_surplus": capacity["available_source_surplus"],
+            "eligible_inventory_quantity": capacity["eligible_inventory_quantity"],
+            "maximum_allowed_shareable": capacity["maximum_allowed_shareable"],
+            "shareable_quantity": available_shareable, "configured_shareable_quantity": configured_quantity,
+            "committed_quantity": committed, "available_shareable_quantity": available_shareable,
             "enabled": bool(source and source.get("enabled")), "valid_until": source.get("valid_until") if source else None,
         })
     return envelope(rows, count=len(rows), privacy="Only the authenticated hospital receives its own stock and reserve details")
@@ -431,14 +492,23 @@ def save_shareable_pool(payload: ShareablePoolPayload, user: dict[str, Any] = De
     forecast_row = next((row for row in analysis["forecasts"] if row["hospital_id"] == user["hospital_id"] and row["supply_id"] == payload.supply_id), None)
     if not forecast_row:
         raise HTTPException(status_code=404, detail="Supply inventory not found at this hospital")
-    reserve = forecast_row["safety_stock"] + forecast_row["forecast_daily_demand"] * min(7, max(2, forecast_row["supplier_lead_time"]))
-    surplus = max(0, round(forecast_row["current_stock"] - reserve))
-    if payload.enabled and payload.shareable_quantity > surplus:
-        raise HTTPException(status_code=422, detail=f"Shareable quantity cannot exceed source surplus ({surplus} units after reserve)")
     hospital_id = user["hospital_id"]
+    existing = next((row for row in database.ACTIVE_DATA.get("shareable_pool", [])
+                     if row["hospital_id"] == hospital_id and row["supply_id"] == payload.supply_id), None)
+    capacity = _shareable_capacity(analysis, hospital_id, payload.supply_id, existing)
+    if payload.shareable_quantity < 0:
+        raise HTTPException(status_code=422, detail="Shareable quantity cannot be negative.")
+    if payload.enabled and capacity["maximum_allowed_shareable"] == 0:
+        raise HTTPException(status_code=422, detail="No safe surplus is currently available to share.")
+    if payload.enabled and payload.shareable_quantity > capacity["maximum_allowed_shareable"]:
+        raise HTTPException(status_code=422, detail=f"Maximum shareable quantity is {capacity['maximum_allowed_shareable']:,} units.")
+    committed = capacity["committed_quantity"]
+    configured_quantity = committed + (payload.shareable_quantity if payload.enabled else 0)
     record = {
         "pool_id": f"POOL-{hospital_id}-{payload.supply_id}", "hospital_id": hospital_id,
-        **payload.model_dump(mode="json"), "updated_at": datetime.now(timezone.utc).isoformat(),
+        **payload.model_dump(mode="json"), "shareable_quantity": configured_quantity,
+        "committed_quantity": committed,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     database.save_source_record("shareable_pool", record, "pool_id")
     refresh_analysis()
@@ -472,7 +542,8 @@ def nearby_supplies(supply_id: str | None = None, user: dict[str, Any] = Depends
         reserve = source_forecast["safety_stock"] + source_forecast["forecast_daily_demand"] * min(7, max(2, source_forecast["supplier_lead_time"]))
         surplus = max(0, round(source_forecast["current_stock"] - reserve))
         destination_need = max(0, target["safety_stock"] + target["forecast_daily_demand"] * min(14, max(1, target["supplier_lead_time"])) - target["current_stock"])
-        shareable = min(int(pool["shareable_quantity"]), surplus)
+        committed = int(pool.get("committed_quantity", 0))
+        shareable = min(max(0, int(pool["shareable_quantity"]) - committed), max(0, surplus - committed))
         if shareable <= 0 or destination_need <= 0:
             continue
         try:
@@ -510,6 +581,7 @@ def nearby_supplies(supply_id: str | None = None, user: dict[str, Any] = Depends
             "latitude": source["latitude"], "longitude": source["longitude"],
             "supply_id": pool["supply_id"], "supply": analysis["supplies"][pool["supply_id"]]["name"],
             "shareable_quantity": shareable, "recommended_quantity": quantity,
+            "destination_need": destination_need,
             "recommendation_id": recommendation["recommendation_id"] if recommendation and feasible else None,
             "road_distance_km": route["distance_km"] if route else None,
             "estimated_travel_minutes": route["duration_minutes"] if route else None,
@@ -603,8 +675,90 @@ def request_transfer(recommendation_id: str, user: dict[str, Any] = Depends(get_
     safe = _public_transfer(item, user["hospital_id"])
     if not safe["transfer_feasible"]:
         raise HTTPException(status_code=422, detail="Transfer request requires an available route and on-time ETA")
+    try:
+        request = fulfillment.create_request(user["hospital_id"], item["supply_id"], item["destination_need"])
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
     action_status[recommendation_id] = "requested"
-    return envelope(ActionResult(status="requested", recommendation_id=recommendation_id).model_dump())
+    first_leg = next(iter(request["legs"]), None)
+    return envelope({
+        **ActionResult(status="requested", recommendation_id=recommendation_id).model_dump(),
+        "request_id": request["request_id"],
+        "requested_quantity": request["requested_quantity"],
+        "initial_offer_quantity": first_leg["allocated_quantity"] if first_leg else 0,
+    })
+
+
+@app.get("/api/supply-requests")
+def list_supply_requests(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = fulfillment.list_visible_requests(user["hospital_id"])
+    return envelope(rows, count=len(rows), workflow="Dynamic Multi-Source Fulfilment")
+
+
+@app.post("/api/supply-requests")
+def create_supply_request(payload: SupplyRequestPayload, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.create_request(user["hospital_id"], payload.supply_id, payload.requested_quantity)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return envelope(request)
+
+
+@app.delete("/api/supply-requests/{request_id}")
+def cancel_supply_request(request_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.cancel_request(request_id, user["hospital_id"])
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return envelope(request)
+
+
+@app.post("/api/supply-requests/{request_id}/legs/{leg_id}/accept")
+def accept_fulfillment_leg(request_id: str, leg_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.accept_leg(request_id, leg_id, user["hospital_id"])
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return envelope(request)
+
+
+@app.post("/api/supply-requests/{request_id}/legs/{leg_id}/reject")
+def reject_fulfillment_leg(request_id: str, leg_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.reject_leg(request_id, leg_id, user["hospital_id"])
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return envelope(request)
+
+
+@app.post("/api/supply-requests/{request_id}/legs/{leg_id}/status")
+def update_fulfillment_leg(request_id: str, leg_id: str, payload: FulfillmentStatusPayload, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.update_leg_status(request_id, leg_id, user["hospital_id"], payload.status.upper())
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if payload.status.upper() in ("IN_TRANSIT", "DELIVERED"):
+        refresh_analysis()
+    return envelope(request)
+
+
+@app.post("/api/supply-requests/{request_id}/legs/{leg_id}/fail")
+def fail_fulfillment_leg(request_id: str, leg_id: str, payload: FulfillmentFailurePayload, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.fail_leg(request_id, leg_id, user["hospital_id"], payload.reason)
+    except PermissionError as error:
+        raise HTTPException(status_code=403, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    return envelope(request)
 
 
 @app.get("/api/management-report/weekly")
@@ -732,7 +886,8 @@ def network_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[st
         if pool.get("enabled"):
             forecast = next((row for row in analysis["forecasts"] if row["hospital_id"] == pool["hospital_id"] and row["supply_id"] == pool["supply_id"]), None)
             if forecast:
-                share_by_hospital[pool["hospital_id"]] += min(int(pool["shareable_quantity"]), forecast["shareable_quantity"])
+                available = max(0, int(pool["shareable_quantity"]) - int(pool.get("committed_quantity", 0)))
+                share_by_hospital[pool["hospital_id"]] += min(available, forecast["shareable_quantity"])
 
     nodes = []
     for hospital_id, hospital in analysis["hospitals"].items():
@@ -759,11 +914,25 @@ def network_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[st
         })
     edges = [{
         "recommendation_id": item["recommendation_id"],
-        "source_hospital_id": item["source_hospital_id"], "source": item["source_hospital"],
-        "destination_hospital_id": item["destination_hospital_id"], "destination": item["destination_hospital"],
+        "source_hospital_id": item["source_hospital_id"], "source": analysis["hospitals"][item["source_hospital_id"]].get("display_name") or item["source_hospital"],
+        "destination_hospital_id": item["destination_hospital_id"], "destination": analysis["hospitals"][item["destination_hospital_id"]].get("display_name") or item["destination_hospital"],
         "supply": item["supply"], "quantity": item["recommended_quantity"],
         "priority_score": item["priority_score"],
     } for item in analysis["transfers"] if user.get("role") == "network_admin" or item["destination_hospital_id"] == user["hospital_id"] or (item["source_hospital_id"] == user["hospital_id"] and any(pool["hospital_id"] == user["hospital_id"] and pool["supply_id"] == item["supply_id"] and pool.get("enabled") for pool in database.ACTIVE_DATA.get("shareable_pool", [])))][:20]
+    for request in fulfillment.list_visible_requests(hospital_id):
+        for leg in request["legs"]:
+            if leg["status"] not in ("OFFERED", "COMMITTED", "IN_TRANSIT", "RECEIVING", "DELIVERED"):
+                continue
+            edges.append({
+                "recommendation_id": f"FUL-{leg['leg_id']}", "fulfillment_leg_id": leg["leg_id"],
+                "request_id": request["request_id"], "leg_status": leg["status"],
+                "source_hospital_id": leg["source_hospital_id"], "source": leg["source_hospital"],
+                "destination_hospital_id": leg["destination_hospital_id"], "destination": leg["destination_hospital"],
+                "supply": leg["supply"], "quantity": leg["allocated_quantity"],
+                "priority_score": "FULFILMENT", "route": leg["route"],
+                "route_distance_km": leg["route_distance_km"], "estimated_eta_minutes": leg["estimated_eta_minutes"],
+            })
+    edges.sort(key=lambda edge: 0 if edge.get("fulfillment_leg_id") else 1)
     return envelope({"nodes": nodes, "edges": edges}, node_count=len(nodes), edge_count=len(edges))
 
 

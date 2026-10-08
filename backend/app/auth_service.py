@@ -29,8 +29,9 @@ def login(hospital_id: str, password: str) -> dict[str, Any] | None:
 
 def user_from_token(token: str | None) -> dict[str, Any]:
     if not token:
-        return {"hospital_id": "H001", "hospital_name": HOSPITAL_USERS["H001"]["hospital_name"], "role": "demo_fallback"}
-    user = TOKENS.get(token.removeprefix("Bearer ").strip())
-    if not user:
-        raise ValueError("Invalid or expired demo session")
-    return dict(user)
+        raise ValueError("Authentication is required")
+    cleaned = token.removeprefix("Bearer ").strip()
+    user = TOKENS.get(cleaned)
+    if user:
+        return dict(user)
+    raise ValueError("Session is invalid or expired; please sign in again")

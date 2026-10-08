@@ -106,7 +106,16 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
         patient_factor = hospital["bed_capacity"] * hospital["occupancy_rate"] / 350
         for supply_index, supply in enumerate(supplies, start=1):
             daily = max(0.6, supply["base_daily_demand"] * patient_factor * _variation(hospital_index, supply_index) * 300)
-            if supply_index == 1 and hospital["hospital_id"] == "H001":
+            if scenario == "kmch_to_psg" and supply_index == 1 and hospital["hospital_id"] == "H001":
+                safety_stock = 250
+                total_stock = round(safety_stock + daily * 20)
+            elif scenario == "kmch_to_psg" and supply_index == 1 and hospital["hospital_id"] == "H002":
+                total_stock = 900
+                safety_stock = 800
+            elif scenario == "kmch_to_psg" and supply_index == 1 and hospital["hospital_id"] == "H003":
+                safety_stock = 500
+                total_stock = round(safety_stock + daily * 20)
+            elif supply_index == 1 and hospital["hospital_id"] == "H001":
                 total_stock = 900
                 safety_stock = 250
             elif supply_index == 1 and hospital["hospital_id"] == "H002":
@@ -154,8 +163,9 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
                 trend = 1 + day_index * ((supply_index % 5) - 2) / 1800
                 spike = 1.0
                 outbreak = 0.0
-                target_spike = hospital["hospital_id"] == "H001" and supply_index in (1, 4, 9)
-                if scenario == "outbreak" and target_spike and day_index >= 83:
+                target_hospital_id = "H002" if scenario == "kmch_to_psg" else "H001"
+                target_spike = hospital["hospital_id"] == target_hospital_id and supply_index in (1, 4, 9)
+                if scenario in {"outbreak", "kmch_to_psg"} and target_spike and day_index >= 83:
                     spike, outbreak = 2.6, 0.8
                 elif scenario == "critical" and target_spike and day_index >= 76:
                     spike, outbreak = 1.9, 0.75
@@ -186,13 +196,22 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
                     "outbreak_signal": outbreak,
                 })
 
+    if scenario == "kmch_to_psg":
+        shareable_pool = [
+            {"pool_id": "POOL-H001-MED001", "hospital_id": "H001", "supply_id": "MED001",
+             "shareable_quantity": 400, "enabled": True, "updated_at": today.isoformat()},
+            {"pool_id": "POOL-H003-MED001", "hospital_id": "H003", "supply_id": "MED001",
+             "shareable_quantity": 200, "enabled": True, "updated_at": today.isoformat()},
+        ]
+    else:
+        shareable_pool = [{
+            "pool_id": "POOL-H002-MED001", "hospital_id": "H002", "supply_id": "MED001",
+            "shareable_quantity": 600, "enabled": True, "updated_at": today.isoformat(),
+        }]
     dataset = {
         "hospitals": hospitals, "supplies": supplies, "inventory": inventory,
         "demand_history": demand_history, "surgery_schedules": [],
-        "shareable_pool": [{
-            "pool_id": "POOL-H002-MED001", "hospital_id": "H002", "supply_id": "MED001",
-            "shareable_quantity": 600, "enabled": True, "updated_at": today.isoformat(),
-        }],
+        "shareable_pool": shareable_pool,
     }
     validate_dataset(dataset)
     return dataset
