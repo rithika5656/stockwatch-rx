@@ -6,9 +6,9 @@ from typing import Any
 
 DEMO_PASSWORD = "demo123"
 HOSPITAL_USERS = {
-    "H001": {"hospital_id": "H001", "hospital_name": "Coimbatore Central Hospital", "role": "hospital_user"},
-    "H002": {"hospital_id": "H002", "hospital_name": "Coimbatore Emergency Medical Center", "role": "hospital_user"},
-    "H003": {"hospital_id": "H003", "hospital_name": "Coimbatore Regional Hospital", "role": "hospital_user"},
+    "H001": {"hospital_id": "H001", "hospital_name": "Kovai Medical Center and Hospital", "role": "hospital_user"},
+    "H002": {"hospital_id": "H002", "hospital_name": "PSG Hospitals", "role": "hospital_user"},
+    "H003": {"hospital_id": "H003", "hospital_name": "Kumaran Medical Center-Multispeciality Hospital", "role": "hospital_user"},
 }
 PASSWORD_HASHES = {hospital_id: hashlib.sha256(DEMO_PASSWORD.encode()).hexdigest() for hospital_id in HOSPITAL_USERS}
 TOKENS: dict[str, dict[str, Any]] = {}

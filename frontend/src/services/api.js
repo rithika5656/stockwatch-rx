@@ -21,6 +21,16 @@ export async function post(path, body = {}) {
   return response.data.data
 }
 
+export async function put(path, body = {}) {
+  const response = await api.put(path, body)
+  return response.data.data
+}
+
+export async function remove(path) {
+  const response = await api.delete(path)
+  return response.data.data
+}
+
 export function getErrorMessage(error) {
   return error.response?.data?.detail?.message || error.response?.data?.detail || error.message || 'Unable to reach the StockWatch-RX API.'
 }

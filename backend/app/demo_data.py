@@ -4,9 +4,9 @@ from datetime import date, timedelta
 from typing import Any
 
 HOSPITAL_SEEDS = [
-    ("Coimbatore Central Hospital", "Coimbatore", "Tamil Nadu", 11.0168, 76.9558),
-    ("Coimbatore Emergency Medical Center", "Coimbatore", "Tamil Nadu", 11.0302, 76.9550),
-    ("Coimbatore Regional Hospital", "Coimbatore", "Tamil Nadu", 11.0456, 76.9710),
+    ("KMCH", "Kovai Medical Center and Hospital", "G. D. Naidu Flyover, Civil Aerodrome, Coimbatore, Tamil Nadu 641014", 11.0430079, 77.0406057, "tertiary_care"),
+    ("PSG Hospitals", "PSG Hospitals", "PSG Quarters Road, Coimbatore, Tamil Nadu 641004", 11.0188398, 77.0073136, "tertiary_care"),
+    ("Kumaran Medical Center", "Kumaran Medical Center-Multispeciality Hospital", "499/500, Sathyamangalam Road, Coimbatore, Tamil Nadu 641035", 11.1072873, 77.0238317, "multispeciality"),
 ]
 
 SUPPLY_SEEDS = [
@@ -52,19 +52,30 @@ def validate_dataset(dataset: dict[str, Any]) -> None:
         if observation["quantity_used"] < 0 or not 0 <= observation["outbreak_signal"] <= 1:
             raise ValueError("Demand history contains invalid consumption or outbreak values")
         date.fromisoformat(observation["date"])
+    for surgery in dataset.get("surgery_schedules", []):
+        if surgery["hospital_id"] not in hospitals or int(surgery["number_of_cases"]) < 0:
+            raise ValueError("Surgery schedule contains an invalid hospital or case count")
+        date.fromisoformat(surgery["scheduled_date"])
+        if any(supply_id not in supplies or float(quantity) < 0 for supply_id, quantity in surgery.get("estimated_supply_requirements", {}).items()):
+            raise ValueError("Surgery schedule contains invalid supply requirements")
+    for share in dataset.get("shareable_pool", []):
+        if share["hospital_id"] not in hospitals or share["supply_id"] not in supplies or int(share["shareable_quantity"]) < 0:
+            raise ValueError("Shareable pool contains an invalid hospital, supply, or quantity")
 
 
 def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
     today = date.today()
     hospitals = []
     for index, seed in enumerate(HOSPITAL_SEEDS, start=1):
-        name, city, state, latitude, longitude = seed
+        display_name, name, address, latitude, longitude, hospital_type = seed
         occupancy = round(0.58 + (index * 13 % 36) / 100, 2)
         bed_capacity = 180 + (index * 47 % 560)
         hospitals.append({
-            "hospital_id": f"H{index:03}", "name": name, "city": city, "state": state,
+            "hospital_id": f"H{index:03}", "name": name, "hospital_name": name,
+            "display_name": display_name, "address": address, "city": "Coimbatore", "state": "Tamil Nadu",
             "latitude": latitude, "longitude": longitude,
-            "bed_capacity": bed_capacity,
+            "hospital_type": hospital_type, "capacity": bed_capacity, "bed_capacity": bed_capacity,
+            "emergency_capacity": max(12, round(bed_capacity * 0.12)), "active": True, "demo_data_flag": True,
             "current_occupancy": round(bed_capacity * occupancy), "occupancy_rate": occupancy,
             "emergency_load": round(0.28 + (index * 17 % 65) / 100, 2),
             "criticality_level": "critical" if occupancy >= 0.88 else "high" if occupancy >= 0.78 else "standard",
@@ -155,6 +166,13 @@ def build_dataset(scenario: str = "redistribution") -> dict[str, Any]:
                     "outbreak_signal": outbreak,
                 })
 
-    dataset = {"hospitals": hospitals, "supplies": supplies, "inventory": inventory, "demand_history": demand_history}
+    dataset = {
+        "hospitals": hospitals, "supplies": supplies, "inventory": inventory,
+        "demand_history": demand_history, "surgery_schedules": [],
+        "shareable_pool": [{
+            "pool_id": "POOL-H002-MED001", "hospital_id": "H002", "supply_id": "MED001",
+            "shareable_quantity": 600, "enabled": True, "updated_at": today.isoformat(),
+        }],
+    }
     validate_dataset(dataset)
     return dataset

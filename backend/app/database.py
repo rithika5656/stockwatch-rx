@@ -15,7 +15,7 @@ MONGO_CLIENT: MongoClient | None = None
 MONGO_DB: Any = None
 ACTIVE_DATA: dict[str, Any] = build_dataset("outbreak")
 DATA_SOURCE = "synthetic demo dataset"
-SOURCE_COLLECTIONS = ("hospitals", "supplies", "inventory", "demand_history")
+SOURCE_COLLECTIONS = ("hospitals", "supplies", "inventory", "demand_history", "surgery_schedules", "shareable_pool")
 DERIVED_COLLECTIONS = ("forecast_results", "redistribution_recommendations", "expiry_risks", "shortage_risks", "alerts")
 
 
@@ -32,8 +32,16 @@ def initialize_database(force_seed: bool = False) -> dict[str, Any]:
         client.admin.command("ping")
         database = client[DATABASE_NAME]
         seed = build_dataset("outbreak")
-        if force_seed or database["hospitals"].count_documents({}) == 0:
-            for name in ("hospitals", "supplies", "inventory", "demand_history"):
+        seeded_hospitals = {item["hospital_id"]: item for item in seed["hospitals"]}
+        existing_hospitals = list(database["hospitals"].find({}, {"_id": 0, "hospital_id": 1, "name": 1}))
+        refresh_seed = force_seed or not existing_hospitals or {
+            item.get("hospital_id") for item in existing_hospitals
+        } != set(seeded_hospitals) or any(
+            seeded_hospitals.get(item.get("hospital_id"), {}).get("name") != item.get("name")
+            for item in existing_hospitals
+        )
+        if refresh_seed:
+            for name in SOURCE_COLLECTIONS:
                 database[name].delete_many({})
                 if seed[name]:
                     database[name].insert_many(seed[name], ordered=False)
@@ -58,7 +66,10 @@ def initialize_database(force_seed: bool = False) -> dict[str, Any]:
 
 def set_scenario(scenario: str) -> dict[str, Any]:
     global ACTIVE_DATA
-    ACTIVE_DATA = build_dataset(scenario)
+    updated = build_dataset(scenario)
+    updated["surgery_schedules"] = ACTIVE_DATA.get("surgery_schedules", [])
+    updated["shareable_pool"] = ACTIVE_DATA.get("shareable_pool", updated["shareable_pool"])
+    ACTIVE_DATA = updated
     if MONGO_DB is not None:
         for name in SOURCE_COLLECTIONS:
             collection = MONGO_DB[name]
@@ -66,6 +77,27 @@ def set_scenario(scenario: str) -> dict[str, Any]:
             if ACTIVE_DATA[name]:
                 collection.insert_many(ACTIVE_DATA[name], ordered=False)
     return ACTIVE_DATA
+
+
+def save_source_record(collection_name: str, record: dict[str, Any], key: str) -> None:
+    if collection_name not in SOURCE_COLLECTIONS:
+        raise ValueError(f"Unsupported source collection: {collection_name}")
+    records = ACTIVE_DATA.setdefault(collection_name, [])
+    existing = next((index for index, item in enumerate(records) if item.get(key) == record.get(key)), None)
+    if existing is None:
+        records.append(record)
+    else:
+        records[existing] = record
+    if MONGO_DB is not None:
+        MONGO_DB[collection_name].replace_one({key: record[key]}, record, upsert=True)
+
+
+def remove_source_record(collection_name: str, value: str, key: str) -> None:
+    if collection_name not in SOURCE_COLLECTIONS:
+        raise ValueError(f"Unsupported source collection: {collection_name}")
+    ACTIVE_DATA[collection_name] = [item for item in ACTIVE_DATA.get(collection_name, []) if item.get(key) != value]
+    if MONGO_DB is not None:
+        MONGO_DB[collection_name].delete_one({key: value})
 
 
 def persist_analysis(analysis: dict[str, Any]) -> None:

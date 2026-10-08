@@ -1,17 +1,17 @@
 import { useEffect, useState } from 'react'
 import { BrowserRouter, NavLink, Route, Routes, useLocation } from 'react-router-dom'
-import { Activity, AlertTriangle, ArrowRight, ArrowUpRight, Bell, Boxes, Building2, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download, Droplets, FileBarChart2, Gauge, HeartPulse, LayoutDashboard, LogOut, Menu, PackageSearch, Search, ShieldAlert, Sparkles, Truck, X } from 'lucide-react'
+import { Activity, AlertTriangle, ArrowRight, ArrowUpRight, Bell, Boxes, Building2, CalendarClock, Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Clock3, Download, Droplets, FileBarChart2, Gauge, HeartPulse, LayoutDashboard, LogOut, Menu, PackageSearch, Plus, Search, ShieldAlert, Sparkles, Truck, X } from 'lucide-react'
 import { Area, AreaChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts'
-import { get, getErrorMessage, post } from './services/api'
+import { get, getErrorMessage, post, put, remove } from './services/api'
 import NetworkFlow from './components/NetworkFlow.jsx'
 import './App.css'
 
 const groups = [
   ['MY HOSPITAL', [['/dashboard', 'Dashboard', LayoutDashboard], ['/inventory', 'Inventory', Boxes], ['/forecasting', 'Forecasting', Activity], ['/shortages', 'Shortage Risk', ShieldAlert], ['/expiry-risk', 'Expiry & Waste', CalendarClock]]],
-  ['LOCAL NETWORK', [['/nearby', 'Nearby Hospitals', Building2], ['/redistribution', 'Redistribution', Truck], ['/map', 'Supply Map', Activity]]],
-  ['DECISIONS', [['/prioritisation', 'Prioritisation', Gauge], ['/assistant', 'Copilot', Sparkles], ['/reports', 'Reports', FileBarChart2]]],
+  ['LOCAL NETWORK', [['/nearby', 'Nearby Hospitals', Building2], ['/redistribution', 'Redistribution', Truck], ['/map', 'Supply Map', Activity], ['/shareable-pool', 'Shareable Pool', Boxes]]],
+  ['DECISIONS', [['/surgeries', 'Surgery Schedule', CalendarClock], ['/weekly-report', 'Weekly Report', FileBarChart2], ['/prioritisation', 'Prioritisation', Gauge], ['/assistant', 'Copilot', Sparkles], ['/reports', 'Reports', FileBarChart2]]],
 ]
-const titles = { '/dashboard': 'Supply intelligence', '/inventory': 'Inventory position', '/forecasting': 'Demand forecasting', '/shortages': 'Shortage risk', '/expiry-risk': 'Expiry & waste', '/redistribution': 'Redistribution queue', '/prioritisation': 'Critical prioritisation', '/hospitals': 'Hospital network', '/supplies': 'Medical supplies', '/assistant': 'MediSupply Copilot', '/reports': 'Reports & exports' }
+const titles = { '/dashboard': 'Supply intelligence', '/inventory': 'Inventory position', '/forecasting': 'Demand forecasting', '/shortages': 'Shortage risk', '/expiry-risk': 'Expiry & waste', '/redistribution': 'Redistribution queue', '/prioritisation': 'Critical prioritisation', '/hospitals': 'Hospital network', '/supplies': 'Medical supplies', '/assistant': 'MediSupply Copilot', '/reports': 'Reports & exports', '/surgeries': 'Surgery schedule', '/shareable-pool': 'Shareable pool', '/weekly-report': 'Weekly management report' }
 
 function useApiData(path, refresh = 0, params = {}) {
   const key = JSON.stringify(params)
@@ -45,7 +45,7 @@ function LoginScreen({ onLogin }) {
       setBusy(false)
     }
   }
-  return <main className="login-screen"><div className="login-grid" /><section className="login-panel"><div className="login-brand"><div className="brand-mark"><HeartPulse size={22} /></div><div><strong>StockWatch-RX</strong><small>COIMBATORE SUPPLY INTELLIGENCE</small></div></div><p className="eyebrow">// HOSPITAL ACCESS</p><h1>Know before<br /><span>the shortage.</span></h1><p className="login-description">Sign in to view your hospital's inventory, forecast signals and nearby eligible supply.</p><form onSubmit={submit}><label>Hospital ID<select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)}><option value="H001">H001 · Coimbatore Central Hospital</option><option value="H002">H002 · Coimbatore Emergency Medical Center</option><option value="H003">H003 · Coimbatore Regional Hospital</option></select></label><label>Demo password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}<button className="button button-primary login-button" disabled={busy}>{busy ? 'Signing in...' : 'Enter hospital workspace'}<ArrowRight size={16} /></button></form><div className="login-footer"><span>DEMO MODE</span><span>3 Coimbatore facilities</span></div></section></main>
+  return <main className="login-screen"><div className="login-grid" /><section className="login-panel"><div className="login-brand"><div className="brand-mark"><HeartPulse size={22} /></div><div><strong>StockWatch-RX</strong><small>COIMBATORE SUPPLY INTELLIGENCE</small></div></div><p className="eyebrow">// HOSPITAL ACCESS</p><h1>Know before<br /><span>the shortage.</span></h1><p className="login-description">Sign in to view your hospital's inventory, forecast signals and nearby eligible supply.</p><form onSubmit={submit}><label>Hospital ID<select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)}><option value="H001">H001 · KMCH</option><option value="H002">H002 · PSG Hospitals</option><option value="H003">H003 · Kumaran Medical Center</option></select></label><label>Demo password<input type="password" value={password} onChange={(event) => setPassword(event.target.value)} /></label>{error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}<button className="button button-primary login-button" disabled={busy}>{busy ? 'Signing in...' : 'Enter hospital workspace'}<ArrowRight size={16} /></button></form><div className="login-footer"><span>DEMO DATA</span><span>3 Coimbatore facilities</span></div></section></main>
 }
 
 function Shell() {
@@ -71,7 +71,7 @@ function Shell() {
     </aside>
     {mobile && <button className="mobile-scrim" aria-label="Close menu" onClick={() => setMobile(false)} />}
     <div className="main-column"><header className="topbar"><button className="mobile-menu icon-button" aria-label="Open menu" onClick={() => setMobile(true)}><Menu size={20} /></button><div className="breadcrumb"><span>STOCKWATCH-RX</span><ChevronRight size={14} /><strong>{titles[location.pathname] || titles['/dashboard']}</strong></div><div className="topbar-actions"><label className="scenario-select"><span>DEMO SCENARIO</span><select value={scenario} onChange={selectScenario} aria-label="Choose demo scenario"><option value="normal">Normal operations</option><option value="outbreak">Outbreak surge</option><option value="critical">Critical shortage</option><option value="expiry">Expiry crisis</option><option value="redistribution">Redistribution opportunity</option></select><ChevronDown size={14} /></label><span className="header-status"><i className="status-dot" />Operational</span><button className="icon-button notification-button" aria-label="Notifications"><Bell size={18} /><i /></button><div className="user-avatar">DR</div></div></header>
-      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local teams</span></footer></main>
+      <main className="page-main"><Routes><Route path="/" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/dashboard" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /><Route path="/inventory" element={<Inventory refresh={refresh} />} /><Route path="/forecasting" element={<Forecast refresh={refresh} authUser={authUser} />} /><Route path="/shortages" element={<Shortages refresh={refresh} />} /><Route path="/expiry-risk" element={<Expiry refresh={refresh} />} /><Route path="/redistribution" element={<Transfers refresh={refresh} />} /><Route path="/prioritisation" element={<Priorities refresh={refresh} />} /><Route path="/hospitals" element={<Hospitals refresh={refresh} />} /><Route path="/supplies" element={<Supplies refresh={refresh} />} /><Route path="/assistant" element={<Assistant />} /><Route path="/reports" element={<Reports refresh={refresh} />} /><Route path="/surgeries" element={<SurgerySchedule refresh={refresh} authUser={authUser} />} /><Route path="/shareable-pool" element={<ShareablePool refresh={refresh} />} /><Route path="/weekly-report" element={<WeeklyReport refresh={refresh} />} /><Route path="*" element={<Dashboard refresh={refresh} scenarioLabel={scenarioLabel} authUser={authUser} />} /></Routes><footer className="page-footer"><span>STOCKWATCH-RX · DECISION SUPPORT PROTOTYPE</span><span>Not medical advice · Validate actions with local teams</span></footer></main>
     </div>
   </div>
 }
@@ -86,8 +86,9 @@ function DashboardHero({ data, scenarioLabel, authUser }) {
       <div className="hero-overline"><span>// INTELLIGENCE CONTROL CENTER</span><span>01 / SUPPLY NETWORK</span></div>
       <h1>MEDICAL SUPPLY<br /><span>INTELLIGENCE</span></h1>
       <p className="hero-tagline">Know Before the Shortage.</p>
-      <p className="hero-description">AI-powered forecasting, risk detection and intelligent redistribution for {authUser?.hospital_name || 'your hospital'}.</p>
-      <div className="hero-signals"><span><i className="status-dot" />AI NETWORK ONLINE</span><span>SCENARIO / {scenarioLabel.toUpperCase()}</span><span>LAST UPDATED / {data.updated_at}</span></div>
+      <p className="hero-description">Prototype forecasting, risk detection and transfer decision support for {authUser?.hospital_name || 'your hospital'}.</p>
+      <p className="prototype-disclaimer">Hospital locations use public information; inventory and demand are synthetic and are not live hospital data.</p>
+      <div className="hero-signals"><span><i className="status-dot" />DECISION SUPPORT ACTIVE</span><span>SCENARIO / {scenarioLabel.toUpperCase()}</span><span>LAST UPDATED / {data.updated_at}</span></div>
     </div>
     <aside className="hero-focus"><div className="hero-focus-label"><span>ACTIVE RISK SIGNAL</span><Badge value={lead?.risk_level || 'LOW'} /></div><strong className="hero-focus-days">{lead?.days_until_stockout ?? '--'}<small>DAYS</small></strong><span className="hero-focus-event">SAFETY STOCK BREACH WINDOW</span><span className="hero-focus-name">{lead?.hospital || 'No facility flagged'}</span><span className="hero-focus-supply">{lead?.supply || 'Supply network stable'}</span><div className="hero-focus-footer"><span>{data.kpis.critical_shortages.toString().padStart(2, '0')} CRITICAL SIGNALS</span><span>SIMULATED FORECAST</span></div></aside>
     <div className="hero-baseline" />
@@ -95,24 +96,38 @@ function DashboardHero({ data, scenarioLabel, authUser }) {
 }
 
 function NearbyPage({ refresh, hospitalId }) {
-  const { data, loading, error } = useApiData(`/nearby-hospitals/${hospitalId}`, refresh)
-  return <><Heading title="Nearby hospitals" description="Local Coimbatore facilities with eligible surplus for this hospital." /><section className="panel data-panel"><div className="panel-heading"><div><span>LOCAL MATCHING</span><h2>Eligible nearby supply</h2></div><span className="inline-stat"><Activity size={15} />15 km demo radius</span></div>{loading ? <Loading /> : error ? <Error message={error} /> : <div className="nearby-list">{data?.map((item) => <article className="nearby-card" key={item.hospital_id}><div><span className="eyebrow">{item.hospital_id} · {item.distance_km ?? '—'} KM</span><h2>{item.hospital_name}</h2><p>{item.eligible ? `${item.eligible_supplies.length} eligible supply matches` : 'No eligible surplus for current risks'}</p></div><div className="nearby-supplies">{item.eligible_supplies.map((supply) => <span key={supply.supply}>{supply.supply} · {supply.quantity.toLocaleString()} units</span>)}</div></article>)}</div>}</section></>
+  const { data, loading, error } = useApiData('/nearby-supplies', refresh)
+  const [requested, setRequested] = useState({})
+  const [requestError, setRequestError] = useState('')
+  async function requestTransfer(item) {
+    try {
+      const result = await post(`/redistribution/${item.recommendation_id}/request`)
+      setRequested((current) => ({ ...current, [item.recommendation_id]: result.status }))
+      setRequestError('')
+    } catch (error) {
+      setRequestError(getErrorMessage(error))
+    }
+  }
+  return <><Heading title="Nearby hospitals" description="Local hospitals and supplies explicitly offered to this facility; internal source stock remains private." />{requestError && <Error message={requestError} />}<section className="nearby-match-list">{loading ? <Loading /> : error ? <Error message={error} /> : !data?.length ? <div className="panel empty-state"><Building2 size={20} /><strong>No shareable supply matches</strong><span>Nearby facilities have not enabled a compatible pool, or no transfer is currently feasible.</span></div> : data.map((item) => <article className="panel nearby-match" key={`${item.hospital_id}-${item.supply_id}`}><div className="nearby-match-main"><span className="eyebrow">{item.hospital_id} · {item.supply_id}</span><h2>{item.hospital_name}</h2><strong>{item.supply}</strong><span>{item.shareable_quantity.toLocaleString()} units shareable</span></div><div className="nearby-match-route"><span><strong>{item.road_distance_km == null ? '—' : `${item.road_distance_km} km`}</strong>road distance</span><span><strong>{item.estimated_travel_minutes == null ? '—' : `${item.estimated_travel_minutes} min`}</strong>OSRM ETA</span><span className={`feasibility-tag ${item.feasible ? 'feasible' : 'not-feasible'}`}>{item.status}</span></div><div className="nearby-match-footer"><p>{item.reason}</p><div className="nearby-match-actions">{item.feasible && <NavLink className="button button-secondary" to="/map">View route <ArrowUpRight size={14} /></NavLink>}<button className="button button-primary" disabled={!item.feasible || !item.recommendation_id || Boolean(requested[item.recommendation_id])} onClick={() => requestTransfer(item)}>{requested[item.recommendation_id] || 'Request transfer'}<ArrowRight size={14} /></button></div></div></article>)}</section><p className="prototype-disclaimer">Hospital locations are based on public map data; supply availability and demand are simulated. Facility {hospitalId} only sees quantities explicitly shared.</p></>
 }
 
 function MapPage({ refresh }) {
-  return <><Heading title="Supply map" description="Interactive Coimbatore hospital map with local transfer routes and marker-level risk." /><NetworkFlow refresh={refresh} /></>
+  return <><Heading title="Supply map" description="Publicly mapped Coimbatore hospitals; inventory and demand are simulated. OSRM road geometry is shown only when a route is available." /><NetworkFlow refresh={refresh} /></>
+function Hospitals({ refresh }) { const { data, loading, error } = useApiData('/hospitals', refresh); return <><Heading title="Hospital network" description="Public hospital identity and location; all operational indicators below are simulated prototype data." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[["Facility", (r) => <Cell r={r.display_name || r.name} sub={`${r.city}, ${r.state}`} />], ['Beds', (r) => r.bed_capacity], ['Occupancy', (r) => `${Math.round(r.occupancy_rate * 100)}%`], ['Emergency load', (r) => `${Math.round(r.emergency_load * 100)}%`], ['Critical gaps', (r) => r.critical_shortages], ['Expiry flags', (r) => r.expiry_risk_count], ['Supply health', (r) => <Health score={r.supply_health_score} />]]} /></section><p className="prototype-disclaimer">Hospital locations use publicly available OpenStreetMap information. Capacity, occupancy, emergency load, and all supply values are simulated.</p></> }
 }
 
 function Dashboard({ refresh, scenarioLabel, authUser }) {
   const location = useLocation()
+  const { data, loading, error } = useApiData('/dashboard/summary', refresh)
   if (location.pathname === '/nearby') return <NearbyPage refresh={refresh} hospitalId={authUser.hospital_id} />
   if (location.pathname === '/map') return <MapPage refresh={refresh} />
-  const { data, loading, error } = useApiData('/dashboard/summary', refresh)
   if (loading && !data) return <Loading />
   if (error) return <Error message={error} />
   const metrics = [['Current inventory', data.kpis.current_inventory_units, 'Usable units at this hospital', Boxes, 'green'], ['Critical supplies', data.kpis.critical_supplies_count, 'Require attention', AlertTriangle, 'red'], ['Forecast alerts', data.kpis.forecast_alerts, 'Local demand signals', Activity, 'teal'], ['Expiry risks', data.kpis.expiry_risks, `${data.kpis.stock_at_risk.toLocaleString()} units at risk`, CalendarClock, 'amber'], ['Nearby surplus', data.kpis.nearby_surplus_hospitals, 'Eligible local sources', Truck, 'blue']]
   const totalRisk = Object.values(data.risk_counts).reduce((sum, count) => sum + count, 0)
   return <><DashboardHero data={data} scenarioLabel={scenarioLabel} authUser={authUser} />
+    <section className="dashboard-addons"><article className="panel surgery-impact-card"><div className="impact-card-heading"><span className="eyebrow">NEXT 7 DAYS · PROTOTYPE SIMULATION</span><NavLink className="text-link" to="/surgeries">Surgery schedule <ArrowRight size={14} /></NavLink></div><h2>Upcoming surgery impact</h2><div className="impact-metrics"><div><strong>{data.upcoming_surgery_impact.scheduled_cases}</strong><span>scheduled cases</span></div><div><strong>{data.upcoming_surgery_impact.affected_supplies}</strong><span>affected supplies</span></div><div><strong>+{data.upcoming_surgery_impact.additional_units.toLocaleString()}</strong><span>forecast units</span></div><div><strong>{data.upcoming_surgery_impact.risk_changes}</strong><span>risk levels changed</span></div></div></article><article className="panel pool-summary-card"><span className="eyebrow">OPT-IN SHARING</span><h2>Shareable supply</h2><strong className="pool-summary-value">{data.shareable_supply_units.toLocaleString()} <small>units</small></strong><span className="pool-summary-note">Enabled by this facility</span><NavLink className="text-link" to="/shareable-pool">Manage pool <ArrowRight size={14} /></NavLink></article></section>
+    <section className="panel dashboard-weekly-summary"><div><span className="eyebrow">WEEKLY MANAGEMENT SUMMARY</span><strong>{data.kpis.critical_shortages} critical shortages · {data.kpis.expiry_risks} expiry risks · {data.kpis.recommended_transfers} transfer candidates</strong></div><NavLink className="text-link" to="/weekly-report">Open weekly report <ArrowRight size={14} /></NavLink></section>
     <div className="scenario-banner"><div className="scenario-icon"><Activity size={18} /></div><div><strong>{scenarioLabel}</strong><span>Scenario active · Forecasts and recommendations reflect this selection</span></div><span className="banner-tag">DEMO SIGNAL</span></div>
     <section className="kpi-grid">{metrics.map(([label, value, note, Icon, tone]) => <article className="kpi-card" key={label}><div className={`kpi-icon ${tone}`}><Icon size={18} /></div><div className="kpi-label">{label}</div><div className="kpi-value">{value.toLocaleString()}</div><div className="kpi-note">{note}</div></article>)}</section>
     <div className="dashboard-grid"><section className="panel demand-panel"><PanelHeading title="Demand signal" eyebrow={`${authUser?.hospital_id || 'H001'} · NORMAL SALINE 500ML`} action={<span className="chart-legend"><i className="legend-historical" />History <i className="legend-forecast" />Forecast</span>} /><div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><AreaChart data={data.demand_chart} margin={{ top: 10, right: 12, left: -18, bottom: 0 }}><defs><linearGradient id="demandFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#167966" stopOpacity={0.2} /><stop offset="95%" stopColor="#167966" stopOpacity={0} /></linearGradient></defs><CartesianGrid vertical={false} stroke="#e9eeec" /><XAxis dataKey="day" tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} interval={5} /><YAxis tickLine={false} axisLine={false} tick={{ fill: '#84918d', fontSize: 11 }} /><Tooltip /><Area dataKey="historical" type="monotone" stroke="#167966" strokeWidth={2} fill="url(#demandFill)" connectNulls name="Historical" /><Line dataKey="forecast" type="monotone" stroke="#dc8b37" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls name="Forecast" /></AreaChart></ResponsiveContainer></div><div className="chart-footnote"><span><ArrowUpRight size={14} />7-day weighted demand baseline</span><span>Forecast confidence: moderate</span></div></section>
@@ -123,7 +138,7 @@ function Dashboard({ refresh, scenarioLabel, authUser }) {
   </>
 }
 
-function TransferRow({ item, compact, decide }) { return <div className={`transfer-row ${compact ? 'compact' : ''}`}><div className="transfer-route"><div className="transfer-facility"><i className="route-dot source" /><strong>{item.source_hospital}</strong></div><div className="transfer-arrow"><span>{item.recommended_quantity.toLocaleString()} units</span><ArrowRight size={15} /></div><div className="transfer-facility"><i className="route-dot destination" /><strong>{item.destination_hospital}</strong></div></div><div className="transfer-meta"><div className="transfer-supply"><strong>{item.supply}</strong><span>{item.estimated_transport_hours}h transit · {item.destination_expected_coverage_days}d cover after</span></div><Badge value={item.priority} /><strong className="transfer-score">{item.priority_score}</strong>{decide && <span className="transfer-actions"><button className="button button-approve" onClick={() => decide(item.recommendation_id, 'approve')}><Check size={14} />Approve</button><button className="icon-button" onClick={() => decide(item.recommendation_id, 'reject')} aria-label="Reject"><X size={16} /></button></span>}</div><p className="transfer-reason">{item.reason}</p>{decide && <details className="why-details"><summary>Why this recommendation?<ChevronDown size={15} /></summary><p>Source stock remains above safety stock and its 7-day reserve; destination coverage uses forecast demand.</p></details>}</div> }
+function TransferRow({ item, compact, decide }) { return <div className={`transfer-row ${compact ? 'compact' : ''}`}><div className="transfer-route"><div className="transfer-facility"><i className="route-dot source" /><strong>{item.source_hospital}</strong></div><div className="transfer-arrow"><span>{item.recommended_quantity.toLocaleString()} units</span><ArrowRight size={15} /></div><div className="transfer-facility"><i className="route-dot destination" /><strong>{item.destination_hospital}</strong></div></div><div className="transfer-meta"><div className="transfer-supply"><strong>{item.supply}</strong><span>{item.road_distance_km == null ? 'Road route unverified' : `${item.road_distance_km} km road · ${item.estimated_transport_minutes} min ETA`} · {item.destination_expected_coverage_days}d cover after</span></div><Badge value={item.priority} /><span className={`feasibility-tag ${item.transfer_feasible ? 'feasible' : 'not-feasible'}`}>{item.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE'}</span>{decide && <span className="transfer-actions"><button className="button button-approve" disabled={!item.transfer_feasible} onClick={() => decide(item.recommendation_id, 'approve')}><Check size={14} />Approve</button><button className="icon-button" onClick={() => decide(item.recommendation_id, 'reject')} aria-label="Reject"><X size={16} /></button></span>}</div><p className="transfer-reason">{item.reason} {item.feasibility_reason}</p></div> }
 function Badge({ value }) { return <span className={`risk-badge ${(value || 'low').toLowerCase()}`}><i />{value || 'LOW'}</span> }
 function Health({ score }) { const tone = score < 50 ? 'red' : score < 70 ? 'amber' : 'green'; return <div className="health-meter"><div><i className={tone} style={{ width: `${score}%` }} /></div><strong>{score}</strong></div> }
 
@@ -140,15 +155,219 @@ function Inventory({ refresh }) {
   return <><Heading title="Inventory position" description="Batch-level visibility with projected consumption and expiry exposure." /><section className="panel data-panel"><div className="table-toolbar"><div className="toolbar-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search hospital, supply, or batch" /></div><select value={hospitalId} onChange={(event) => setHospitalId(event.target.value)} className="filter-select"><option value="all">All hospitals</option>{hospitals.map((item) => <option key={item.hospital_id} value={item.hospital_id}>{item.name}</option>)}</select><select value={supplyId} onChange={(event) => setSupplyId(event.target.value)} className="filter-select"><option value="all">All supplies</option>{supplies.map((item) => <option key={item.supply_id} value={item.supply_id}>{item.name}</option>)}</select><select value={risk} onChange={(event) => setRisk(event.target.value)} className="filter-select"><option value="all">All risk levels</option>{['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'].map((item) => <option key={item}>{item}</option>)}</select><span className="filter-count">{rows.length} batches</span></div><Table loading={loading} error={error} rows={rows} click={setSelected} columns={[["Hospital", (r) => <Cell r={r.hospital} sub={r.city} />], ["Supply", (r) => <Cell r={r.supply} sub={r.category} />], ["Batch", (r) => r.batch_id], ["On hand", (r) => r.quantity.toLocaleString()], ["Safety stock", (r) => r.safety_stock.toLocaleString()], ["Daily use", (r) => `${r.daily_demand}/d`], ["Expiry", (r) => `${r.expiry_date} · ${r.days_until_expiry}d`], ["Risk", (r) => <Badge value={r.risk_level} />], ["Waste", (r) => <Badge value={r.expiry_risk} />]]} /></section>{selected && <Drawer title={selected.supply} close={() => setSelected(null)}><Detail label="Hospital" value={selected.hospital} /><Detail label="Batch" value={selected.batch_id} /><Detail label="Quantity" value={selected.quantity.toLocaleString()} /><Detail label="Safety stock" value={selected.safety_stock.toLocaleString()} /><Detail label="Daily forecast" value={`${selected.daily_demand} units`} /><Detail label="Expiry" value={`${selected.expiry_date} (${selected.days_until_expiry} days)`} /></Drawer>}</>
 }
 
-function Forecast({ refresh }) {
+function SurgerySchedule({ refresh, authUser }) {
+  const [revision, setRevision] = useState(0)
+  const [editingId, setEditingId] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [simulation, setSimulation] = useState(null)
+  const [simulating, setSimulating] = useState(false)
+  const [error, setError] = useState('')
+  const [form, setForm] = useState({ scheduled_date: new Date().toISOString().slice(0, 10), surgery_type: 'general_surgery', number_of_cases: 12, expected_duration_minutes: 120 })
+  const { data: types } = useApiData('/surgery-types', refresh)
+  const { data: surgeries, loading } = useApiData('/surgeries', refresh + revision)
+  const activeSurgeries = (surgeries || []).filter((item) => item.status === 'scheduled')
+  const impact = (types || []).find((item) => item.surgery_type === form.surgery_type)?.supplies || []
+  const cases = Number(form.number_of_cases) || 0
+  const projectedUnits = impact.reduce((sum, item) => sum + item.units_per_case * cases, 0)
+
+  async function save(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      const payload = { ...form, number_of_cases: cases, expected_duration_minutes: Number(form.expected_duration_minutes) }
+      if (editingId) await put(`/surgeries/${editingId}`, payload)
+      else await post('/surgeries', payload)
+      setEditingId('')
+      setForm((current) => ({ ...current, number_of_cases: 12 }))
+      setRevision((value) => value + 1)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function simulate() {
+    setSimulating(true)
+    setError('')
+    try {
+      setSimulation(await post('/forecast/simulate', {
+        supply_id: 'MED001',
+        surgery: { ...form, number_of_cases: cases, expected_duration_minutes: Number(form.expected_duration_minutes) },
+      }))
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setSimulating(false)
+    }
+  }
+
+  async function cancel(id) {
+    try {
+      await remove(`/surgeries/${id}`)
+      setRevision((value) => value + 1)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    }
+  }
+
+  function edit(item) {
+    setEditingId(item.surgery_id)
+    setForm({ scheduled_date: item.scheduled_date, surgery_type: item.surgery_type, number_of_cases: item.number_of_cases, expected_duration_minutes: item.expected_duration_minutes })
+  }
+
+  return <>
+    <Heading title="Surgery schedule" description={`Schedule demo cases for ${authUser?.hospital_name || 'this hospital'}; their mapped supply demand is recalculated in forecasting.`} />
+    <div className="schedule-layout">
+      <section className="panel schedule-form-panel">
+        <PanelHeading title={editingId ? 'Edit scheduled cases' : 'Add scheduled cases'} eyebrow="HOSPITAL-OWNED SCHEDULE" />
+        <form className="schedule-form" onSubmit={save}>
+          <label className="filter-control"><span>Scheduled date</span><input type="date" min={new Date().toISOString().slice(0, 10)} value={form.scheduled_date} onChange={(event) => setForm({ ...form, scheduled_date: event.target.value })} required /></label>
+          <Select label="Surgery type" value={form.surgery_type} change={(value) => setForm({ ...form, surgery_type: value })} options={(types || []).map((item) => [item.surgery_type, item.surgery_type.replaceAll('_', ' ')])} />
+          <label className="filter-control"><span>Number of cases</span><input type="number" min="0" max="1000" value={form.number_of_cases} onChange={(event) => setForm({ ...form, number_of_cases: event.target.value })} required /></label>
+          <label className="filter-control"><span>Expected duration (minutes)</span><input type="number" min="1" max="1440" value={form.expected_duration_minutes} onChange={(event) => setForm({ ...form, expected_duration_minutes: event.target.value })} required /></label>
+          <div className="surgery-impact-preview"><span className="eyebrow">MAPPED ADDITIONAL DEMAND</span><strong>+{projectedUnits.toLocaleString()} units</strong><div>{impact.map((item) => <span key={item.supply_id}>{item.supply}: +{(item.units_per_case * cases).toLocaleString()}</span>)}</div></div>
+          {error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}
+          {simulation && simulation.scheduled_cases === cases && simulation.scheduled_date === form.scheduled_date && simulation.surgery_type === form.surgery_type && <div className="surgery-simulation-result"><span className="eyebrow">WHAT-IF · NORMAL SALINE</span><div><span>Baseline</span><strong>{simulation.baseline_forecast_daily_demand} / day</strong><Badge value={simulation.baseline_risk_level} /></div><div><span>Adjusted</span><strong>{simulation.adjusted_forecast_daily_demand} / day</strong><Badge value={simulation.adjusted_risk_level} /></div><small>Safety-stock breach: {simulation.baseline_safety_breach_days} → {simulation.adjusted_safety_breach_days} days · +{simulation.surgery_additional_units} surgery units this week</small></div>}
+          <div className="schedule-form-actions"><button type="button" className="button button-secondary" onClick={simulate} disabled={simulating || !types?.length}>{simulating ? 'Simulating...' : 'Simulate forecast'}<Activity size={14} /></button><button className="button button-primary" disabled={busy || !types?.length}>{busy ? 'Updating forecast...' : editingId ? 'Save changes' : 'Add surgery schedule'}<Plus size={15} /></button>{editingId && <button type="button" className="button button-secondary" onClick={() => setEditingId('')}>Cancel edit</button>}</div>
+        </form>
+      </section>
+      <section className="schedule-list-section"><div className="schedule-list-heading"><div><span className="eyebrow">{authUser?.hospital_id} · DEMO SCHEDULE</span><h2>Scheduled cases</h2></div><span className="inline-stat">{activeSurgeries.length} active</span></div>
+        {loading ? <Loading /> : !activeSurgeries.length ? <div className="panel empty-state"><CalendarClock size={20} /><strong>No scheduled cases</strong><span>Add a schedule to recalculate supply demand.</span></div> : activeSurgeries.map((item) => <article className="panel surgery-row" key={item.surgery_id}><div className="surgery-row-top"><div><span className="eyebrow">{item.surgery_id}</span><h3>{new Date(`${item.scheduled_date}T00:00:00`).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'short' })}</h3></div><span className="risk-badge medium">{item.number_of_cases} cases</span></div><p>{item.surgery_type.replaceAll('_', ' ')} · {item.expected_duration_minutes} min expected</p><div className="surgery-supply-impact">{item.supply_impact.map((row) => <span key={row.supply_id}>{row.supply} <strong>+{row.quantity.toLocaleString()}</strong></span>)}</div><div className="schedule-row-actions"><button className="button button-secondary" onClick={() => edit(item)}>Edit</button><button className="button button-danger" onClick={() => cancel(item.surgery_id)}>Cancel surgery</button></div></article>)}
+      </section>
+    </div>
+    <p className="prototype-disclaimer">Surgery schedules and consumption coefficients are prototype simulation inputs, not clinical guidance.</p>
+  </>
+}
+
+function ShareablePool({ refresh }) {
+  const [revision, setRevision] = useState(0)
+  const [supplyId, setSupplyId] = useState('MED001')
+  const [quantity, setQuantity] = useState('0')
+  const [enabled, setEnabled] = useState(false)
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+  const { data, loading } = useApiData('/shareable-pool', refresh + revision)
+  const rows = data || []
+  const selected = rows.find((row) => row.supply_id === supplyId)
+
+  async function save(event) {
+    event.preventDefault()
+    setBusy(true)
+    setError('')
+    try {
+      await post('/shareable-pool', { supply_id: supplyId, shareable_quantity: Number(quantity), enabled })
+      setRevision((value) => value + 1)
+    } catch (requestError) {
+      setError(getErrorMessage(requestError))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  function choose(id) {
+    setSupplyId(id)
+    const row = rows.find((item) => item.supply_id === id)
+    setQuantity(String(row?.shareable_quantity || 0))
+    setEnabled(Boolean(row?.enabled))
+  }
+
+  return <>
+    <Heading title="Shareable pool" description="Your facility chooses which surplus quantities are visible to nearby hospitals. Internal stock and safety reserves remain private." />
+    <div className="share-pool-layout">
+      <section className="panel share-pool-form"><PanelHeading title="Configure supply sharing" eyebrow="OPT-IN CONTROL" />
+        <form className="schedule-form" onSubmit={save}>
+          <Select label="Medical supply" value={supplyId} change={choose} options={rows.map((row) => [row.supply_id, row.supply])} />
+          {selected && <div className="share-private-summary"><Detail label="Total stock · private" value={`${selected.total_stock.toLocaleString()} units`} /><Detail label="Protected reserve · private" value={`${selected.safety_reserve.toLocaleString()} units`} /><Detail label="Available source surplus" value={`${selected.source_surplus.toLocaleString()} units`} /></div>}
+          <label className="filter-control"><span>Shareable quantity</span><input type="number" min="0" max={enabled ? selected?.source_surplus || 0 : undefined} value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label>
+          <label className="sharing-toggle"><input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} /><span>Enable this supply in the local share pool</span></label>
+          {error && <div className="login-error"><AlertTriangle size={15} />{error}</div>}
+          <button className="button button-primary" disabled={busy || !selected}>{busy ? 'Updating pool...' : 'Save sharing preference'}<Check size={15} /></button>
+        </form>
+      </section>
+      <section className="share-pool-list"><div className="schedule-list-heading"><div><span className="eyebrow">PRIVATE FACILITY VIEW</span><h2>Current pool settings</h2></div></div>{loading ? <Loading /> : rows.map((row) => <article className="panel pool-row" key={row.supply_id}><div><span className="eyebrow">{row.supply_id}</span><h3>{row.supply}</h3><small>{row.enabled ? 'SHAREABLE' : 'NOT SHAREABLE'}</small></div><strong>{row.enabled ? Math.min(row.shareable_quantity, row.source_surplus).toLocaleString() : '0'} <small>units visible to network</small></strong><button className="button button-secondary" onClick={() => choose(row.supply_id)}>Configure</button></article>)}</section>
+    </div>
+    <p className="prototype-disclaimer">Only the enabled quantity is exposed to other hospitals. Inventory, demand, and pool quantities are simulated.</p>
+  </>
+}
+
+function WeeklyReport({ refresh }) {
+  const [revision, setRevision] = useState(0)
+  const [endDate, setEndDate] = useState(new Date(Date.now() + 6 * 86400000).toISOString().slice(0, 10))
+  const [startDate, setStartDate] = useState(new Date().toISOString().slice(0, 10))
+  const { data, loading, error } = useApiData('/management-report/weekly', refresh + revision, { start_date: startDate, end_date: endDate })
+  const summary = data?.executive_summary
+
+  function exportCsv() {
+    if (!data) return
+    const records = [
+      ...data.shortages.map((row) => ({ section: 'shortage', supply: row.supply, hospital: row.hospital, risk: row.risk_level, units: row.current_stock, detail: row.explanation })),
+      ...data.transfers.map((row) => ({ section: 'transfer', supply: row.supply, hospital: `${row.source_hospital} to ${row.destination_hospital}`, risk: row.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE', units: row.recommended_quantity, detail: row.feasibility_reason })),
+      ...data.expiry_risks.map((row) => ({ section: 'expiry', supply: row.supply, hospital: row.hospital, risk: row.risk_level, units: row.expected_waste, detail: row.recommended_action })),
+      ...data.management_actions.map((row) => ({ section: 'action', supply: '', hospital: '', risk: row.priority, units: '', detail: row.action })),
+    ]
+    const columns = ['section', 'supply', 'hospital', 'risk', 'units', 'detail']
+    const csv = [columns.join(','), ...records.map((row) => columns.map((key) => `"${String(row[key] ?? '').replaceAll('"', '""')}"`).join(','))].join('\r\n')
+    const link = document.createElement('a')
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+    link.download = 'stockwatch-rx-weekly-management-report.csv'
+    link.click()
+    URL.revokeObjectURL(link.href)
+  }
+
+  return <>
+    <Heading title="Weekly management report" description="Calculated supply risks, opt-in transfer recommendations, expiry exposure, and surgery impact for the selected period." action={<div className="report-actions"><button className="button button-secondary" onClick={() => window.print()} disabled={!data}><FileBarChart2 size={15} />Print / PDF</button><button className="button button-primary" onClick={exportCsv} disabled={!data}><Download size={15} />Export CSV</button></div>} />
+    <section className="panel report-period"><label className="filter-control"><span>Start date</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label className="filter-control"><span>End date</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><button className="button button-secondary" onClick={() => setRevision((value) => value + 1)}>Refresh report</button></section>
+    {loading && !data ? <Loading /> : error ? <Error message={error} /> : data && <div className="weekly-report-print"><div className="report-titleline"><div><span className="eyebrow">{data.period.start_date} — {data.period.end_date}</span><h2>Weekly network overview</h2></div><span className="risk-badge medium">DEMO DATA</span></div>
+      <section className="report-summary-grid">{[['Hospitals monitored', summary.hospitals_monitored], ['Critical shortages', summary.critical_shortages], ['High-risk supplies', summary.high_risk_supplies], ['Expiry risks', summary.expiry_risks], ['Transfers recommended', summary.transfers_recommended], ['Transfers completed', summary.transfers_completed], ['Surgery cases', summary.upcoming_surgery_cases]].map(([label, value]) => <article className="report-summary-item" key={label}><span>{label}</span><strong>{value.toLocaleString()}</strong></article>)}</section>
+      <ReportSection title="Shortage risk" rows={data.shortages} empty="No shortage risks for this hospital in the active analysis." columns={['Supply', 'Hospital', 'Risk', 'On hand', 'Forecast / day', 'Safety breach']} render={(row) => [row.supply, row.hospital, <Badge key="risk" value={row.risk_level} />, row.current_stock.toLocaleString(), row.forecast_daily_demand.toLocaleString(), `${row.days_until_stockout} days`]} />
+      <ReportSection title="Surgery impact" rows={data.surgeries} empty="No scheduled surgeries in this report period." columns={['Date', 'Surgery type', 'Cases', 'Affected supplies / units', 'Adjusted forecast / day', 'Risk change']} render={(row) => [row.scheduled_date, row.surgery_type.replaceAll('_', ' '), row.number_of_cases, row.supply_impact.map((item) => `${item.supply} +${item.additional_units}`).join(' · '), row.supply_impact.map((item) => `${item.supply}: ${item.adjusted_forecast_daily_demand}`).join(' · '), row.supply_impact.map((item) => `${item.baseline_risk_level} → ${item.adjusted_risk_level}`).join(' · ')]} />
+      <ReportSection title="Redistribution" rows={data.transfers} empty="No transfer candidates for this facility." columns={['Source', 'Destination', 'Supply', 'Quantity', 'Road distance', 'ETA', 'Feasibility', 'Reason']} render={(row) => [row.source_hospital, row.destination_hospital, row.supply, row.recommended_quantity.toLocaleString(), row.road_distance_km == null ? 'Unavailable' : `${row.road_distance_km} km`, row.estimated_transport_minutes == null ? 'Unavailable' : `${row.estimated_transport_minutes} min`, row.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE', row.feasibility_reason]} />
+      <ReportSection title="Expiry risk" rows={data.expiry_risks} empty="No expiry-risk records for this hospital." columns={['Supply', 'Hospital', 'Batch', 'Expiry', 'Expected use', 'Potential waste', 'FEFO action']} render={(row) => [row.supply, row.hospital, row.batch_id, row.expiry_date, row.expected_usage.toLocaleString(), row.expected_waste.toLocaleString(), row.recommended_action]} />
+      <section className="panel report-actions-list"><PanelHeading title="Management actions" eyebrow="DATA-BASED FOLLOW-UP" />{data.management_actions.length ? data.management_actions.map((item, index) => <div className="report-action-row" key={`${item.action}-${index}`}><Badge value={item.priority} /><div><strong>{item.action}</strong><span>{item.basis}</span></div></div>) : <div className="empty-state">No actions generated from current risk data.</div>}</section>
+      <p className="prototype-disclaimer">{data.disclaimer}</p>
+    </div>}
+  </>
+}
+
+function ReportSection({ title, rows, columns, render, empty }) {
+  return <section className="panel weekly-table-panel"><PanelHeading title={title} eyebrow="REPORT DETAIL" />{rows.length ? <div className="table-scroll"><table className="data-table"><thead><tr>{columns.map((column) => <th key={column}>{column}</th>)}</tr></thead><tbody>{rows.map((row, index) => <tr key={row.surgery_id || row.recommendation_id || row.batch_id || `${row.hospital_id}-${row.supply_id}-${index}`}>{render(row).map((value, cellIndex) => <td key={cellIndex}>{value}</td>)}</tr>)}</tbody></table></div> : <div className="empty-state">{empty}</div>}</section>
+}
+
+function Forecast({ refresh, authUser }) {
   const hospitals = useApiData('/hospitals', refresh).data || []
   const supplies = useApiData('/supplies', refresh).data || []
-  const [hospital, setHospital] = useState('H001')
+  const [hospital, setHospital] = useState(authUser?.hospital_id || 'H001')
   const [supply, setSupply] = useState('MED001')
   const [horizon, setHorizon] = useState('14')
   const { data, loading, error } = useApiData('/forecast', refresh, { hospital_id: hospital, supply_id: supply, horizon_days: Number(horizon) })
   const points = [...(data?.historical_series || []).slice(-20).map((value, index) => ({ label: `-${20 - index}d`, historical: value })), ...(data?.forecast_series || []).map((item) => ({ label: `+${item.day}d`, forecast: item.demand }))]
-  return <><Heading title="Demand forecasting" description="Weighted moving average with trend and outbreak adjustments. This prototype makes no claim of medical accuracy." /><section className="panel filter-panel"><Select label="Hospital" value={hospital} change={setHospital} options={hospitals.map((item) => [item.hospital_id, item.name])} /><Select label="Medical supply" value={supply} change={setSupply} options={supplies.map((item) => [item.supply_id, item.name])} /><label className="filter-control"><span>Horizon</span><select value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="60">60 days</option></select></label></section>{error ? <Error message={error} /> : <><div className="forecast-kpis">{[['Current stock', data?.current_stock?.toLocaleString(), 'units'], ['Average daily demand', data?.average_daily_demand, 'units / day'], ['Forecast demand', data?.forecast_daily_demand, 'units / day'], ['Expected stock-out', `${data?.days_until_stockout ?? '—'} days`, data?.stockout_date]].map(([label, value, note]) => <div className="forecast-metric" key={label}><span>{label}</span><strong>{loading ? '…' : value ?? '—'}</strong><small>{note}</small></div>)}</div><section className="panel forecast-chart-panel"><PanelHeading title={`${data?.supply || 'Supply'} demand curve`} eyebrow={`${hospitals.find((item) => item.hospital_id === hospital)?.name || hospital} · ${horizon} DAY HORIZON`} action={<Badge value={data?.risk_level} />} /><div className="large-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={points}><CartesianGrid vertical={false} stroke="#e8eeeb" /><XAxis dataKey="label" tickLine={false} axisLine={false} interval={4} /><YAxis tickLine={false} axisLine={false} /><Tooltip /><Line dataKey="historical" name="Historical" stroke="#167966" strokeWidth={2} dot={false} connectNulls /><Line dataKey="forecast" name="Forecast" stroke="#dc8b37" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls /></LineChart></ResponsiveContainer></div><div className="forecast-explanation"><CircleHelp size={17} /><div><strong>Why this forecast?</strong><p>{data?.explanation}</p><small>7-day weighted moving average · trend adjustment · synthetic outbreak indicator</small></div></div></section></>}</>
+  const components = data?.forecast_components
+  const componentRows = components ? [
+    ['Historical baseline', components.historical_baseline],
+    ['Existing model adjustments', components.existing_model_adjustments],
+    ['Surgery demand · 7-day average', components.surgery_additional_daily_average],
+    ['Adjusted forecast', components.adjusted_daily_forecast],
+  ] : []
+  const visibleHospitals = hospitals.filter((item) => authUser?.role === 'network_admin' || item.hospital_id === authUser?.hospital_id)
+
+  return <>
+    <Heading title="Demand forecasting" description="Historical demand plus dated surgery requirements and existing model adjustments. Prototype decision support only." />
+    <section className="panel filter-panel">
+      <Select label="Hospital" value={hospital} change={setHospital} options={visibleHospitals.map((item) => [item.hospital_id, item.name])} />
+      <Select label="Medical supply" value={supply} change={setSupply} options={supplies.map((item) => [item.supply_id, item.name])} />
+      <label className="filter-control"><span>Horizon</span><select value={horizon} onChange={(event) => setHorizon(event.target.value)}><option value="7">7 days</option><option value="14">14 days</option><option value="30">30 days</option><option value="60">60 days</option></select></label>
+    </section>
+    {error ? <Error message={error} /> : <>
+      <div className="forecast-kpis">{[['Current stock', data?.current_stock?.toLocaleString(), 'units'], ['Average daily demand', data?.average_daily_demand, 'units / day'], ['Forecast demand', data?.forecast_daily_demand, 'units / day'], ['Expected stock-out', `${data?.days_until_stockout ?? '—'} days`, data?.stockout_date]].map(([label, value, note]) => <div className="forecast-metric" key={label}><span>{label}</span><strong>{loading ? '…' : value ?? '—'}</strong><small>{note}</small></div>)}</div>
+      <section className="panel forecast-chart-panel">
+        <PanelHeading title={`${data?.supply || 'Supply'} demand curve`} eyebrow={`${visibleHospitals.find((item) => item.hospital_id === hospital)?.name || hospital} · ${horizon} DAY HORIZON`} action={<Badge value={data?.risk_level} />} />
+        <div className="large-chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={points}><CartesianGrid vertical={false} stroke="#e8eeeb" /><XAxis dataKey="label" tickLine={false} axisLine={false} interval={4} /><YAxis tickLine={false} axisLine={false} /><Tooltip /><Line dataKey="historical" name="Historical" stroke="#167966" strokeWidth={2} dot={false} connectNulls /><Line dataKey="forecast" name="Forecast" stroke="#dc8b37" strokeWidth={2} strokeDasharray="5 4" dot={false} connectNulls /></LineChart></ResponsiveContainer></div>
+        <div className="forecast-explanation"><CircleHelp size={17} /><div><strong>Why did the forecast change?</strong><p>{data?.explanation}</p><div className="forecast-component-grid">{componentRows.map(([label, value]) => <div key={label}><span>{label}</span><strong>{Number(value).toLocaleString(undefined, { maximumFractionDigits: 1 })} units/day</strong></div>)}</div><small>Historical consumption and scheduled surgery demand are synthetic prototype inputs.</small></div></div>
+      </section>
+    </>}
+  </>
 }
 function Select({ label, value, change, options }) { return <label className="filter-control"><span>{label}</span><select value={value} onChange={(event) => change(event.target.value)}>{options.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label> }
 
@@ -161,7 +380,7 @@ function Transfers({ refresh }) {
   const [statuses, setStatuses] = useState({})
   const [toast, setToast] = useState('')
   async function decide(id, action) { try { const result = await post(`/redistribution/${id}/${action}`); setStatuses((current) => ({ ...current, [id]: result.status })); setToast(`Transfer ${result.status}.`); setTimeout(() => setToast(''), 2500) } catch (error) { setToast(getErrorMessage(error)) } }
-  return <><Heading title="Redistribution queue" description="Source surplus is protected by safety stock and a 7-day reserve before transfer." />{toast && <div className="toast-message"><Check size={15} />{toast}</div>}{error ? <Error message={error} /> : loading ? <Loading /> : <div className="recommendation-list">{data.map((item) => <article className="panel recommendation-panel" key={item.recommendation_id}><div className="recommendation-top"><div><span className="eyebrow">{item.recommendation_id}</span><h2>{item.supply}</h2></div><Badge value={item.priority} /></div><TransferRow item={item} decide={decide} /><div className="recommendation-details"><Detail label="Source before" value={`${item.source_stock_before.toLocaleString()} units`} /><Detail label="Source after" value={`${item.source_remaining_stock.toLocaleString()} units`} /><Detail label="Destination cover" value={`${item.destination_expected_coverage_days} days`} /><Detail label="Transport" value={`${item.estimated_transport_hours} hours`} /><Detail label="Source expiry" value={item.source_expiry_date} /></div><div className="action-status">Status: <strong>{statuses[item.recommendation_id] || item.status}</strong></div></article>)}</div>}</>
+  return <><Heading title="Redistribution queue" description="Only enabled share-pool quantities are offered; route feasibility is verified against OSRM road ETA." />{toast && <div className="toast-message"><Check size={15} />{toast}</div>}{error ? <Error message={error} /> : loading ? <Loading /> : !data?.length ? <div className="panel empty-state"><Truck size={20} /><strong>No transfer candidates</strong><span>There are no active local requests matched to an enabled share pool.</span></div> : <div className="recommendation-list">{data.map((item) => <article className="panel recommendation-panel" key={item.recommendation_id}><div className="recommendation-top"><div><span className="eyebrow">{item.recommendation_id}</span><h2>{item.supply}</h2></div><Badge value={item.priority} /></div><TransferRow item={item} decide={decide} /><div className="recommendation-details"><Detail label="Shareable quantity" value={`${item.shareable_quantity.toLocaleString()} units`} /><Detail label="Requested quantity" value={`${item.recommended_quantity.toLocaleString()} units`} /><Detail label="Road distance" value={item.road_distance_km == null ? 'Unverified' : `${item.road_distance_km} km`} /><Detail label="ETA" value={item.estimated_transport_minutes == null ? 'Unverified' : `${item.estimated_transport_minutes} minutes`} /><Detail label="Status" value={statuses[item.recommendation_id] || item.status} /></div><div className="action-status">{item.feasibility_reason}</div></article>)}</div>}</>
 }
 
 function Priorities({ refresh }) { const { data, loading, error } = useApiData('/prioritisation', refresh); return <><Heading title="Critical prioritisation" description="Transparent allocation scoring across emergency demand, patient load, stock-out urgency, alternatives, and criticality." /><section className="score-method"><strong>Priority score weights</strong><div className="weight-chips"><span>Emergency demand <b>35%</b></span><span>Patient load <b>25%</b></span><span>Stock-out urgency <b>20%</b></span><span>Alternative unavailable <b>10%</b></span><span>Supply criticality <b>10%</b></span></div></section><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Priority', (r) => <Badge value={r.priority} />], ['Hospital', (r) => <Cell r={r.hospital} sub={`${r.days_until_stockout} days cover`} />], ['Supply', (r) => <Cell r={r.supply} sub={`${r.criticality} criticality`} />], ['Score', (r) => <Score value={r.priority_score} />], ['Probability', (r) => `${Math.round(r.shortage_probability * 100)}%`], ['Decision factors', (r) => r.reasons.join(' · ')]]} /></section><p className="method-disclaimer">Scores support operational review; they are not clinical triage.</p></> }
