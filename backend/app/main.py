@@ -84,17 +84,28 @@ def scoped_analysis(user: dict[str, Any]) -> dict[str, Any]:
     hospital_id = user["hospital_id"]
     if user.get("role") == "network_admin":
         return analysis
+
+    local_ids = {
+        hospital_key
+        for hospital_key, hospital in analysis["hospitals"].items()
+        if hospital.get("city") == analysis["hospitals"][hospital_id].get("city")
+    }
+
     scoped = dict(analysis)
-    scoped["forecasts"] = [row for row in analysis["forecasts"] if row["hospital_id"] == hospital_id]
-    scoped["shortages"] = [row for row in analysis["shortages"] if row["hospital_id"] == hospital_id]
-    scoped["expiry_risks"] = [row for row in analysis["expiry_risks"] if row["hospital_id"] == hospital_id]
-    scoped["priorities"] = [row for row in analysis["priorities"] if row["hospital_id"] == hospital_id]
-    scoped["transfers"] = [row for row in analysis["transfers"] if row["destination_hospital_id"] == hospital_id]
-    scoped["inventory_totals"] = {key: value for key, value in analysis["inventory_totals"].items() if key[0] == hospital_id}
-    scoped["safety_totals"] = {key: value for key, value in analysis["safety_totals"].items() if key[0] == hospital_id}
-    scoped["hospitals"] = {hospital_id: analysis["hospitals"][hospital_id]}
-    scoped["history_points"] = {key: value for key, value in analysis["history_points"].items() if key[0] == hospital_id}
-    scoped["batches"] = {key: value for key, value in analysis["batches"].items() if key[0] == hospital_id}
+    scoped["forecasts"] = [row for row in analysis["forecasts"] if row["hospital_id"] in local_ids]
+    scoped["shortages"] = [row for row in analysis["shortages"] if row["hospital_id"] in local_ids]
+    scoped["expiry_risks"] = [row for row in analysis["expiry_risks"] if row["hospital_id"] in local_ids]
+    scoped["priorities"] = [row for row in analysis["priorities"] if row["hospital_id"] in local_ids]
+    scoped["transfers"] = [
+        row
+        for row in analysis["transfers"]
+        if row["source_hospital_id"] in local_ids and row["destination_hospital_id"] in local_ids
+    ]
+    scoped["inventory_totals"] = {key: value for key, value in analysis["inventory_totals"].items() if key[0] in local_ids}
+    scoped["safety_totals"] = {key: value for key, value in analysis["safety_totals"].items() if key[0] in local_ids}
+    scoped["hospitals"] = {key: value for key, value in analysis["hospitals"].items() if key in local_ids}
+    scoped["history_points"] = {key: value for key, value in analysis["history_points"].items() if key[0] in local_ids}
+    scoped["batches"] = {key: value for key, value in analysis["batches"].items() if key[0] in local_ids}
     return scoped
 
 

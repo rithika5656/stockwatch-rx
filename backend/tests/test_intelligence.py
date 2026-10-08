@@ -6,6 +6,8 @@ from datetime import date, timedelta
 
 from app.demo_data import build_dataset
 from app.engine import RISK_THRESHOLDS, _risk, _simulate_fefo_batches, analyze
+from app import database
+from app import main as main_module
 
 
 class IntelligenceTests(unittest.TestCase):
@@ -91,6 +93,23 @@ class IntelligenceTests(unittest.TestCase):
         self.assertIn("alternative_availability", item["score_components"])
         self.assertIn("supply_criticality", item["score_components"])
         self.assertTrue(item["reasons"])
+
+    def test_hospital_user_views_local_coimbatore_network(self) -> None:
+        database.ACTIVE_DATA = build_dataset("outbreak")
+        main_module._cached_analysis = None
+        main_module._cached_data_id = None
+
+        user = {"hospital_id": "H002", "role": "hospital_user"}
+        scoped = main_module.scoped_analysis(user)
+
+        self.assertEqual({row["hospital_id"] for row in scoped["forecasts"]}, {"H001", "H002", "H003"})
+        self.assertGreater(len(scoped["shortages"]), 0)
+        self.assertGreater(len(scoped["transfers"]), 0)
+        self.assertEqual(set(scoped["hospitals"]), {"H001", "H002", "H003"})
+
+        database.ACTIVE_DATA = build_dataset("outbreak")
+        main_module._cached_analysis = None
+        main_module._cached_data_id = None
 
 
 if __name__ == "__main__":
