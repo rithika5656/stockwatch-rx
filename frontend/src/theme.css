@@ -652,6 +652,10 @@ button, input, select { color: var(--theme-white); }
 .fulfillment-progress>div:first-child>span { color: var(--theme-muted); font: 9px var(--theme-mono); text-align: right; }
 .fulfillment-progress-track { height: 5px; overflow: hidden; border-radius: 5px; background: rgba(255,255,255,.08); }
 .fulfillment-progress-track i { height: 100%; display: block; border-radius: inherit; background: linear-gradient(90deg,#43d99a,var(--theme-lime)); box-shadow: 0 0 13px rgba(182,255,0,.3); transition: width .45s ease; }
+.fulfillment-timeline { display: grid; gap: 0; margin: 9px 0 3px; padding: 0; list-style: none; }
+.fulfillment-timeline li { min-height: 25px; display: grid; grid-template-columns: 45px minmax(0,1fr); align-items: start; gap: 9px; padding: 5px 0; border-left: 1px solid var(--theme-line); }
+.fulfillment-timeline time { padding-left: 9px; color: var(--theme-lime); font: 8px var(--theme-mono); }
+.fulfillment-timeline li span { color: var(--theme-secondary); font: 9px 'Space Grotesk',sans-serif; line-height: 1.4; }
 .fulfillment-legs { display: grid; gap: 0; margin-top: 13px; border-top: 1px solid var(--theme-line); }
 .fulfillment-leg { display: grid; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--theme-line); }
 .fulfillment-leg-route { display: flex; align-items: center; gap: 8px; color: var(--theme-lime); }

@@ -57,6 +57,15 @@ function Shell() {
   const [scenarioLabel, setScenarioLabel] = useState('Outbreak surge')
   const [refresh, setRefresh] = useState(0)
   useEffect(() => { get('/demo/scenario').then((item) => { setScenario(item.key); setScenarioLabel(item.label) }).catch(() => {}) }, [])
+  useEffect(() => {
+    function syncDemoScenario() {
+      setScenario('kmch_to_psg')
+      setScenarioLabel('KMCH to PSG transfer demo')
+      setRefresh((current) => current + 1)
+    }
+    window.addEventListener('stockwatch:scenario-changed', syncDemoScenario)
+    return () => window.removeEventListener('stockwatch:scenario-changed', syncDemoScenario)
+  }, [])
   if (!authUser) return <LoginScreen onLogin={setAuthUser} />
   async function selectScenario(event) {
     try { const item = await post('/demo/scenario', { scenario: event.target.value }); setScenario(item.key); setScenarioLabel(item.label); setRefresh((current) => current + 1) }
@@ -99,7 +108,6 @@ function NearbyPage({ refresh, hospitalId }) {
   const { data, loading, error } = useApiData('/nearby-supplies', refresh)
   const hospitals = useApiData('/hospitals', refresh).data || []
   const supplies = useApiData('/supplies', refresh).data || []
-  const [whatIfSource, setWhatIfSource] = useState('')
   const [whatIfSupply, setWhatIfSupply] = useState('MED001')
   const [whatIfEnabled, setWhatIfEnabled] = useState(true)
   const [whatIfQuantity, setWhatIfQuantity] = useState('600')
@@ -107,8 +115,7 @@ function NearbyPage({ refresh, hospitalId }) {
   const [simulation, setSimulation] = useState(null)
   const [simulating, setSimulating] = useState(false)
   const [simulationError, setSimulationError] = useState('')
-  const sourceOptions = hospitals.filter((item) => item.hospital_id !== hospitalId)
-  const sourceId = whatIfSource || sourceOptions[0]?.hospital_id || ''
+  const sourceId = data?.find((item) => item.feasible)?.hospital_id || data?.[0]?.hospital_id || ''
 
   async function simulateTransfer(event) {
     event.preventDefault()
@@ -141,8 +148,7 @@ function NearbyPage({ refresh, hospitalId }) {
     }
   }
   return <><Heading title="Nearby hospitals" description="Local hospitals and supplies explicitly offered to this facility; internal source stock remains private." />
-    <section className="panel what-if-panel"><div className="what-if-heading"><div><span className="eyebrow">NON-PERSISTENT SCENARIO</span><h2>What-if transfer feasibility</h2></div><span className="risk-badge medium">SIMULATION</span></div><form className="what-if-controls" onSubmit={simulateTransfer}>
-      <Select label="Source hospital" value={sourceId} change={setWhatIfSource} options={sourceOptions.map((item) => [item.hospital_id, item.display_name || item.name])} />
+    <section className="panel what-if-panel"><div className="what-if-heading"><div><span className="eyebrow">NON-PERSISTENT SCENARIO</span><h2>What-if transfer feasibility</h2><small>Automatically evaluates the nearest eligible nearby hospital offers.</small></div><span className="risk-badge medium">SIMULATION</span></div><form className="what-if-controls" onSubmit={simulateTransfer}>
       <Select label="Supply" value={whatIfSupply} change={setWhatIfSupply} options={supplies.map((item) => [item.supply_id, item.name])} />
       <label className="filter-control"><span>Shareable units</span><input type="number" min="0" value={whatIfQuantity} onChange={(event) => setWhatIfQuantity(event.target.value)} /></label>
       <label className="filter-control"><span>Added ETA (minutes)</span><input type="number" min="0" max="10080" value={etaIncrease} onChange={(event) => setEtaIncrease(event.target.value)} /></label>
@@ -369,6 +375,7 @@ function WeeklyReport({ refresh }) {
       ...data.shortages.map((row) => ({ section: 'shortage', supply: row.supply, hospital: row.hospital, risk: row.risk_level, units: row.current_stock, detail: row.explanation })),
       ...data.transfers.map((row) => ({ section: 'transfer', supply: row.supply, hospital: `${row.source_hospital} to ${row.destination_hospital}`, risk: row.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE', units: row.recommended_quantity, detail: row.feasibility_reason })),
       ...data.expiry_risks.map((row) => ({ section: 'expiry', supply: row.supply, hospital: row.hospital, risk: row.risk_level, units: row.expected_waste, detail: row.recommended_action })),
+      ...data.fulfillment_requests.map((row) => ({ section: 'fulfillment', supply: row.supply, hospital: row.destination_hospital, risk: row.status, units: `${row.fulfilled_quantity}/${row.requested_quantity}`, detail: `${row.remaining_quantity} remaining; ${row.rematch_count} re-matches; ${row.rejected_offers_count} rejected; ${row.failed_transfers_count} failed` })),
       ...data.management_actions.map((row) => ({ section: 'action', supply: '', hospital: '', risk: row.priority, units: '', detail: row.action })),
     ]
     const columns = ['section', 'supply', 'hospital', 'risk', 'units', 'detail']
@@ -384,10 +391,11 @@ function WeeklyReport({ refresh }) {
     <Heading title="Weekly management report" description="Calculated supply risks, opt-in transfer recommendations, expiry exposure, and surgery impact for the selected period." action={<div className="report-actions"><button className="button button-secondary" onClick={() => window.print()} disabled={!data}><FileBarChart2 size={15} />Print / PDF</button><button className="button button-primary" onClick={exportCsv} disabled={!data}><Download size={15} />Export CSV</button></div>} />
     <section className="panel report-period"><label className="filter-control"><span>Start date</span><input type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} /></label><label className="filter-control"><span>End date</span><input type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} /></label><button className="button button-secondary" onClick={() => setRevision((value) => value + 1)}>Refresh report</button></section>
     {loading && !data ? <Loading /> : error ? <Error message={error} /> : data && <div className="weekly-report-print"><div className="report-titleline"><div><span className="eyebrow">{data.period.start_date} — {data.period.end_date}</span><h2>Weekly network overview</h2></div><span className="risk-badge medium">DEMO DATA</span></div>
-      <section className="report-summary-grid">{[['Hospitals monitored', summary.hospitals_monitored], ['Critical shortages', summary.critical_shortages], ['High-risk supplies', summary.high_risk_supplies], ['Expiry risks', summary.expiry_risks], ['Transfers recommended', summary.transfers_recommended], ['Transfers completed', summary.transfers_completed], ['Surgery cases', summary.upcoming_surgery_cases]].map(([label, value]) => <article className="report-summary-item" key={label}><span>{label}</span><strong>{value.toLocaleString()}</strong></article>)}</section>
+      <section className="report-summary-grid">{[['Hospitals monitored', summary.hospitals_monitored], ['Critical shortages', summary.critical_shortages], ['High-risk supplies', summary.high_risk_supplies], ['Expiry risks', summary.expiry_risks], ['Transfers recommended', summary.transfers_recommended], ['Transfers completed', summary.transfers_completed], ['Surgery cases', summary.upcoming_surgery_cases], ['Fulfillment requests', summary.fulfillment.requests], ['Requested units', summary.fulfillment.total_requested_units], ['Delivered units', summary.fulfillment.total_fulfilled_units], ['Partially fulfilled', summary.fulfillment.partially_fulfilled_requests], ['Fully fulfilled', summary.fulfillment.fully_fulfilled_requests], ['Avg match time', summary.fulfillment.average_matching_time_seconds == null ? '—' : `${summary.fulfillment.average_matching_time_seconds}s`], ['Avg road ETA', summary.fulfillment.average_transfer_eta_minutes == null ? '—' : `${summary.fulfillment.average_transfer_eta_minutes}m`], ['Re-matches', summary.fulfillment.rematches], ['Rejected offers', summary.fulfillment.rejected_offers], ['Failed transfers', summary.fulfillment.failed_transfers], ['Multi-source requests', summary.fulfillment.multi_source_fulfillment_count]].map(([label, value]) => <article className="report-summary-item" key={label}><span>{label}</span><strong>{typeof value === 'number' ? value.toLocaleString() : value}</strong></article>)}</section>
       <ReportSection title="Shortage risk" rows={data.shortages} empty="No shortage risks for this hospital in the active analysis." columns={['Supply', 'Hospital', 'Risk', 'On hand', 'Forecast / day', 'Safety breach']} render={(row) => [row.supply, row.hospital, <Badge key="risk" value={row.risk_level} />, row.current_stock.toLocaleString(), row.forecast_daily_demand.toLocaleString(), `${row.days_until_stockout} days`]} />
       <ReportSection title="Surgery impact" rows={data.surgeries} empty="No scheduled surgeries in this report period." columns={['Date', 'Surgery type', 'Cases', 'Affected supplies / units', 'Adjusted forecast / day', 'Risk change']} render={(row) => [row.scheduled_date, row.surgery_type.replaceAll('_', ' '), row.number_of_cases, row.supply_impact.map((item) => `${item.supply} +${item.additional_units}`).join(' · '), row.supply_impact.map((item) => `${item.supply}: ${item.adjusted_forecast_daily_demand}`).join(' · '), row.supply_impact.map((item) => `${item.baseline_risk_level} → ${item.adjusted_risk_level}`).join(' · ')]} />
       <ReportSection title="Redistribution" rows={data.transfers} empty="No transfer candidates for this facility." columns={['Source', 'Destination', 'Supply', 'Quantity', 'Road distance', 'ETA', 'Feasibility', 'Reason']} render={(row) => [row.source_hospital, row.destination_hospital, row.supply, row.recommended_quantity.toLocaleString(), row.road_distance_km == null ? 'Unavailable' : `${row.road_distance_km} km`, row.estimated_transport_minutes == null ? 'Unavailable' : `${row.estimated_transport_minutes} min`, row.transfer_feasible ? 'FEASIBLE' : 'NOT FEASIBLE', row.feasibility_reason]} />
+      <ReportSection title="Supply request fulfillment" rows={data.fulfillment_requests} empty="No supply requests were created in this report period." columns={['Request', 'Supply', 'Requested', 'Delivered', 'Remaining', 'Status', 'Sources', 'Re-matches', 'Rejected', 'Failed']} render={(row) => [row.request_id, row.supply, row.requested_quantity.toLocaleString(), row.fulfilled_quantity.toLocaleString(), row.remaining_quantity.toLocaleString(), row.status.replaceAll('_', ' '), new Set(row.legs.filter((leg) => !['REJECTED', 'EXPIRED', 'CANCELLED'].includes(leg.status)).map((leg) => leg.source_hospital_id)).size, row.rematch_count || 0, row.rejected_offers_count || 0, row.failed_transfers_count || 0]} />
       <ReportSection title="Expiry risk" rows={data.expiry_risks} empty="No expiry-risk records for this hospital." columns={['Supply', 'Hospital', 'Batch', 'Expiry', 'Expected use', 'Potential waste', 'FEFO action']} render={(row) => [row.supply, row.hospital, row.batch_id, row.expiry_date, row.expected_usage.toLocaleString(), row.expected_waste.toLocaleString(), row.recommended_action]} />
       <section className="panel report-actions-list"><PanelHeading title="Management actions" eyebrow="DATA-BASED FOLLOW-UP" />{data.management_actions.length ? data.management_actions.map((item, index) => <div className="report-action-row" key={`${item.action}-${index}`}><Badge value={item.priority} /><div><strong>{item.action}</strong><span>{item.basis}</span></div></div>) : <div className="empty-state">No actions generated from current risk data.</div>}</section>
       <p className="prototype-disclaimer">{data.disclaimer}</p>
@@ -410,14 +418,14 @@ function Forecast({ refresh, authUser }) {
   const components = data?.forecast_components
   const componentRows = components ? [
     ['Historical baseline', components.historical_baseline],
-    ['Existing model adjustments', components.existing_model_adjustments],
+    ['Forecast adjustment', components.forecast_adjustment],
     ['Surgery demand · 7-day average', components.surgery_additional_daily_average],
     ['Adjusted forecast', components.adjusted_daily_forecast],
   ] : []
   const visibleHospitals = hospitals.filter((item) => authUser?.role === 'network_admin' || item.hospital_id === authUser?.hospital_id)
 
   return <>
-    <Heading title="Demand forecasting" description="Historical demand plus dated surgery requirements and existing model adjustments. Prototype decision support only." />
+    <Heading title="Demand forecasting" description="Historical demand, projected stock-out timing, and dated surgery requirements. Prototype decision support only." />
     <section className="panel filter-panel">
       <Select label="Hospital" value={hospital} change={setHospital} options={visibleHospitals.map((item) => [item.hospital_id, item.name])} />
       <Select label="Medical supply" value={supply} change={setSupply} options={supplies.map((item) => [item.supply_id, item.name])} />
@@ -435,11 +443,11 @@ function Forecast({ refresh, authUser }) {
 }
 function Select({ label, value, change, options }) { return <label className="filter-control"><span>{label}</span><select value={value} onChange={(event) => change(event.target.value)}>{options.map(([id, name]) => <option key={id} value={id}>{name}</option>)}</select></label> }
 
-function Shortages({ refresh }) { const { data, loading, error } = useApiData('/shortages', refresh); return <><Heading title="Shortage risk" description="Forecast-ranked supply gaps, ordered by projected stock-out urgency." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Risk', (r) => <Badge value={r.risk_level} />], ['Hospital', (r) => r.hospital], ['Supply', (r) => r.supply], ['On hand', (r) => r.current_stock.toLocaleString()], ['Daily forecast', (r) => `${r.forecast_daily_demand}/d`], ['Stock-out', (r) => <strong className="critical-value">{r.days_until_stockout} days</strong>], ['Probability', (r) => `${Math.round(r.shortage_probability * 100)}%`], ['Driver', (r) => r.outbreak_signal ? 'Outbreak signal' : `Trend ${r.trend_percent}%`]]} /></section></> }
+function Shortages({ refresh }) { const { data, loading, error } = useApiData('/shortages', refresh); return <><Heading title="Shortage risk" description="Forecast-ranked supply gaps, ordered by projected stock-out urgency." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Risk', (r) => <Badge value={r.risk_level} />], ['Hospital', (r) => r.hospital], ['Supply', (r) => r.supply], ['On hand', (r) => r.current_stock.toLocaleString()], ['Daily forecast', (r) => `${r.forecast_daily_demand}/d`], ['Stock-out', (r) => <strong className="critical-value">{r.days_until_stockout} days</strong>], ['Demand trend', (r) => `${r.trend_percent}%`]]} /></section></> }
 
 function Expiry({ refresh }) { const { data, loading, error } = useApiData('/expiry-risks', refresh); return <><Heading title="Expiry & waste" description="Expected remaining quantity by batch, projected through expiry." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Risk', (r) => <Badge value={r.risk_level} />], ['Hospital', (r) => r.hospital], ['Supply / batch', (r) => <Cell r={r.supply} sub={r.batch_id} />], ['Quantity', (r) => r.quantity.toLocaleString()], ['Expiry', (r) => `${r.expiry_date} · ${r.days_until_expiry}d`], ['Expected use', (r) => r.expected_usage.toLocaleString()], ['Expected waste', (r) => <strong className="critical-value">{r.expected_waste.toLocaleString()}</strong>], ['Action', (r) => r.recommended_action]]} /></section></> }
 
-function FulfillmentProgressCard({ request, direction, authUser, updateLeg, cancelRequest }) {
+function FulfillmentProgressCard({ request, direction, authUser, updateLeg, cancelRequest, rematchRequest }) {
   const legs = request.visibleLegs || []
   return <article className="panel fulfillment-request">
     <header className="fulfillment-request-header">
@@ -447,21 +455,25 @@ function FulfillmentProgressCard({ request, direction, authUser, updateLeg, canc
       <span className={`fulfillment-status ${request.status.toLowerCase()}`}>{request.status.replaceAll('_', ' ')}</span>
     </header>
     <div className="fulfillment-progress">
-      <div><strong>{request.fulfilled_quantity.toLocaleString()} <small>/ {request.requested_quantity.toLocaleString()} units</small></strong><span>{request.remaining_quantity.toLocaleString()} remaining · {request.matching_status.replaceAll('_', ' ')}</span></div>
+      <div><strong>{request.fulfilled_quantity.toLocaleString()} <small>/ {request.requested_quantity.toLocaleString()} delivered</small></strong><span>{(request.allocated_quantity || 0).toLocaleString()} allocated · {(request.in_transit_quantity || 0).toLocaleString()} in transit · {request.remaining_quantity.toLocaleString()} remaining need</span></div>
       <div className="fulfillment-progress-track"><i style={{ width: `${Math.min(100, request.fulfilled_quantity / request.requested_quantity * 100)}%` }} /></div>
     </div>
+    {request.timeline?.length > 0 && <ol className="fulfillment-timeline" aria-label="Supply request timeline">{request.timeline.slice(-8).map((event) => <li key={event.event_id}><time dateTime={event.occurred_at}>{new Date(event.occurred_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</time><span>{event.message}</span></li>)}</ol>}
     {legs.length ? <div className="fulfillment-legs">{legs.map((leg) => <div className="fulfillment-leg" key={leg.leg_id}>
-      <div className="fulfillment-leg-route"><strong>{leg.source_hospital || 'Source unavailable'}</strong><ArrowRight size={15} /><strong>{leg.destination_hospital || 'Destination unavailable'}</strong><span className={`fulfillment-status ${leg.status.toLowerCase()}`}>{leg.status.replaceAll('_', ' ')}</span></div>
-      <div className="fulfillment-leg-meta"><b>{leg.allocated_quantity.toLocaleString()} units</b><span>{leg.route_distance_km} km road</span><span>ETA {leg.estimated_eta_minutes} min</span><span>{leg.route_provider}</span></div>
+      <div className="fulfillment-leg-route"><strong>{leg.source_hospital || 'Source unavailable'}</strong><ArrowRight size={15} /><strong>{leg.destination_hospital || 'Destination unavailable'}</strong><span className={`fulfillment-status ${(leg.lifecycle_status || leg.status).toLowerCase()}`}>{(leg.lifecycle_status || leg.status).replaceAll('_', ' ')}</span></div>
+      <div className="fulfillment-leg-meta"><b>{leg.allocated_quantity.toLocaleString()} units · {leg.status === 'DELIVERED' ? 'delivered' : leg.status === 'OFFERED' ? 'offered' : 'allocated'}</b><span>{leg.route_distance_km} km road</span><span>ETA {leg.estimated_eta_minutes} min</span><span>{leg.route_provider}</span></div>
       <small className="fulfillment-batches">FEFO batches: {leg.source_batch_allocations.map((batch) => `${batch.batch_id} · ${batch.quantity}`).join(' / ')}</small>
       {leg.failure_reason && <small className="fulfillment-failure">{leg.failure_reason}</small>}
       <div className="fulfillment-leg-actions">
         {leg.status === 'OFFERED' && leg.source_hospital_id === authUser.hospital_id && <><button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'accept')}><Check size={14} />Accept & commit</button><button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'reject')}><X size={14} />Reject</button></>}
-        {leg.status === 'COMMITTED' && leg.source_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'IN_TRANSIT' })}><Truck size={14} />Dispatch</button>}
-        {leg.status === 'IN_TRANSIT' && leg.destination_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'DELIVERED' })}><Check size={14} />Confirm delivery</button>}
-        {['COMMITTED', 'IN_TRANSIT'].includes(leg.status) && <button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'fail', { reason: 'Source stock or route became unavailable.' })}>Report failure</button>}
+        {leg.status === 'COMMITTED' && leg.source_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'PICKED_UP' })}><Check size={14} />Confirm pickup</button>}
+        {leg.status === 'PICKED_UP' && leg.source_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'IN_TRANSIT' })}><Truck size={14} />Dispatch</button>}
+        {leg.status === 'IN_TRANSIT' && leg.destination_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'ARRIVED' })}><Check size={14} />Mark arrived</button>}
+        {leg.status === 'ARRIVED' && leg.destination_hospital_id === authUser.hospital_id && <button className="button button-primary" onClick={() => updateLeg(request.request_id, leg.leg_id, 'status', { status: 'DELIVERED' })}><Check size={14} />Confirm delivery</button>}
+        {['COMMITTED', 'PICKED_UP', 'IN_TRANSIT', 'ARRIVED'].includes(leg.status) && <button className="button button-danger" onClick={() => updateLeg(request.request_id, leg.leg_id, 'fail', { reason: 'Source stock or route became unavailable.' })}>Report failure</button>}
       </div>
     </div>)}</div> : <div className="fulfillment-no-legs">No eligible source is currently offering this supply.</div>}
+    {direction === 'incoming' && request.remaining_quantity > 0 && request.matching_status === 'NO_SOURCE_AVAILABLE' && <button className="button button-secondary fulfillment-cancel" onClick={() => rematchRequest(request.request_id)}>Search again</button>}
     {direction === 'incoming' && !legs.some((leg) => ['DISPATCHING', 'IN_TRANSIT', 'DELIVERED'].includes(leg.status)) && !['CANCELLED', 'FULLY_FULFILLED'].includes(request.status) && <button className="button button-secondary fulfillment-cancel" onClick={() => cancelRequest(request.request_id)}>Cancel request</button>}
   </article>
 }
@@ -470,12 +482,14 @@ function Transfers({ refresh, authUser }) {
   const [revision, setRevision] = useState(0)
   const [supplyId, setSupplyId] = useState('MED001')
   const [quantity, setQuantity] = useState('600')
+  const [urgency, setUrgency] = useState('URGENT')
+  const [deliveryDeadline, setDeliveryDeadline] = useState('')
   const [busy, setBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [statuses, setStatuses] = useState({})
   const { data, loading, error } = useApiData('/redistribution', refresh)
   const { data: requests, loading: requestsLoading, error: requestsError } = useApiData('/supply-requests', refresh + revision)
-  const suppliesData = useApiData('/supplies', refresh).data || []
+  const suppliesData = useApiData('/supply-catalogue', refresh).data || []
   useEffect(() => {
     const interval = window.setInterval(() => setRevision((value) => value + 1), 5000)
     return () => window.clearInterval(interval)
@@ -484,16 +498,47 @@ function Transfers({ refresh, authUser }) {
     event.preventDefault()
     setBusy(true)
     try {
-      const request = await post('/supply-requests', { supply_id: supplyId, requested_quantity: Number(quantity) })
-      setToast(`${request.request_id} matching started.`)
+      const request = await post('/supply-requests', {
+        supply_id: supplyId,
+        requested_quantity: Number(quantity),
+        urgency_level: urgency,
+        delivery_deadline: deliveryDeadline || null,
+      })
+      setToast(`${request.request_id} broadcast matching started.`)
+      setRevision((value) => value + 1)
+    } catch (requestError) { setToast(getErrorMessage(requestError)) }
+    finally { setBusy(false) }
+  }
+  async function runMultiSourceDemo() {
+    setBusy(true)
+    try {
+      const result = await post('/demo/multi-source-fulfillment')
+      window.dispatchEvent(new Event('stockwatch:scenario-changed'))
+      setToast(result.demo_ready
+        ? 'Demo ready: PSG needs 600 units. KMCH matched 400; accept to trigger the next-source match.'
+        : 'Demo request created, but the expected KMCH offer did not form. Review current source eligibility.')
       setRevision((value) => value + 1)
     } catch (requestError) { setToast(getErrorMessage(requestError)) }
     finally { setBusy(false) }
   }
   async function updateLeg(requestId, legId, action, body) {
     try {
-      await post(`/supply-requests/${requestId}/legs/${legId}/${action}`, body)
-      setToast(action === 'accept' ? 'Stock committed. Matching the remaining need now.' : action === 'reject' ? 'Offer rejected. Searching the next eligible source.' : 'Fulfillment progress updated.')
+      const updated = await post(`/supply-requests/${requestId}/legs/${legId}/${action}`, body)
+      const changedLeg = updated.legs.find((leg) => leg.leg_id === legId)
+      setToast(action === 'accept'
+        ? `${changedLeg?.source_hospital || 'Source'} accepted ${changedLeg?.allocated_quantity || 0} units. ${updated.remaining_quantity} units still required.${updated.remaining_quantity ? ' Searching for another eligible source.' : ' Delivery confirmation is still required.'}`
+        : action === 'reject'
+          ? `${changedLeg?.source_hospital || 'Source'} declined the offer. Searching for another eligible source.`
+          : action === 'fail'
+            ? `${changedLeg?.allocated_quantity || 0}-unit transfer failed. Recalculating remaining need and searching again.`
+            : 'Fulfillment progress updated.')
+      setRevision((value) => value + 1)
+    } catch (requestError) { setToast(getErrorMessage(requestError)) }
+  }
+  async function rematchRequest(requestId) {
+    try {
+      const updated = await post(`/supply-requests/${requestId}/rematch`)
+      setToast(updated.matching_status === 'OFFERED' ? 'A new source offer is available.' : 'No eligible source is available yet.')
       setRevision((value) => value + 1)
     } catch (requestError) { setToast(getErrorMessage(requestError)) }
   }
@@ -515,12 +560,12 @@ function Transfers({ refresh, authUser }) {
     visibleLegs: request.legs.filter((leg) => leg.source_hospital_id === authUser.hospital_id),
   })).filter((request) => request.visibleLegs.length > 0)
   return <><Heading title="Redistribution queue" description="Dynamic Multi-Source Fulfilment matches opt-in supply, commits partial quantities, and automatically searches again for the remaining need." />
-    <section className="panel fulfillment-create-panel"><div><span className="eyebrow">DYNAMIC MULTI-SOURCE FULFILMENT</span><h2>Request supply across the local network</h2><p>Each source commits only what it can safely provide. Remaining demand is re-matched immediately.</p></div><form className="fulfillment-create-form" onSubmit={createRequest}><label className="filter-control"><span>Medical supply</span><select value={supplyId} onChange={(event) => setSupplyId(event.target.value)}>{suppliesData.map((item) => <option key={item.supply_id} value={item.supply_id}>{item.name}</option>)}</select></label><label className="filter-control"><span>Total required units</span><input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><button className="button button-primary" disabled={busy || !suppliesData.length}>{busy ? 'Matching sources...' : 'Create supply request'}<ArrowRight size={15} /></button></form></section>
+    <section className="panel fulfillment-create-panel"><div><span className="eyebrow">DYNAMIC MULTI-SOURCE FULFILMENT</span><h2>Broadcast request across the local network</h2><p>Only the required supply, quantity, urgency, and optional deadline are needed. Eligible nearby hospitals are identified automatically.</p>{authUser.hospital_id === 'H002' && <button className="button button-secondary fulfillment-demo-button" disabled={busy} onClick={runMultiSourceDemo}><Sparkles size={14} />{busy ? 'Preparing demo...' : 'Run multi-source fulfilment demo'}</button>}</div><form className="fulfillment-create-form" onSubmit={createRequest}><label className="filter-control"><span>Drug or medical supply</span><select value={supplyId} onChange={(event) => setSupplyId(event.target.value)}>{suppliesData.map((item) => <option key={item.supply_id} value={item.supply_id}>{item.name}</option>)}</select></label><label className="filter-control"><span>Required quantity</span><input type="number" min="1" value={quantity} onChange={(event) => setQuantity(event.target.value)} /></label><label className="filter-control"><span>Urgency level</span><select value={urgency} onChange={(event) => setUrgency(event.target.value)}><option value="LOW">Low</option><option value="MEDIUM">Medium</option><option value="URGENT">Urgent</option><option value="CRITICAL">Critical</option></select></label><label className="filter-control"><span>Optional delivery deadline</span><input type="date" value={deliveryDeadline} onChange={(event) => setDeliveryDeadline(event.target.value)} /></label><button className="button button-primary" disabled={busy || !suppliesData.length}>{busy ? 'Broadcasting...' : 'Broadcast Request'}<ArrowRight size={15} /></button></form></section>
     {toast && <div className="toast-message"><Check size={15} />{toast}</div>}
     <section className="fulfillment-section"><div className="fulfillment-section-heading"><div><span className="eyebrow">MY HOSPITAL · {authUser.hospital_name}</span><h2>Incoming and outgoing supplies</h2></div><span className="fulfillment-live"><i className="status-dot" />RE-MATCHING ACTIVE</span></div>
       {requests?.length > 0 && <div className="fulfillment-direction-groups">
-        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>INCOMING</h3><span>Destination is {authUser.hospital_name}</span></div>{incomingRequests.length ? <div className="fulfillment-request-list directional">{incomingRequests.map((request) => <FulfillmentProgressCard key={`incoming-${request.request_id}`} request={request} direction="incoming" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} />)}</div> : <div className="fulfillment-direction-empty">No incoming supply requests.</div>}</section>
-        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>OUTGOING</h3><span>Source is {authUser.hospital_name}</span></div>{outgoingRequests.length ? <div className="fulfillment-request-list directional">{outgoingRequests.map((request) => <FulfillmentProgressCard key={`outgoing-${request.request_id}`} request={request} direction="outgoing" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} />)}</div> : <div className="fulfillment-direction-empty">No outgoing transfers.</div>}</section>
+        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>INCOMING</h3><span>Destination is {authUser.hospital_name}</span></div>{incomingRequests.length ? <div className="fulfillment-request-list directional">{incomingRequests.map((request) => <FulfillmentProgressCard key={`incoming-${request.request_id}`} request={request} direction="incoming" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} rematchRequest={rematchRequest} />)}</div> : <div className="fulfillment-direction-empty">No incoming supply requests.</div>}</section>
+        <section className="fulfillment-direction-group"><div className="fulfillment-direction-heading"><h3>OUTGOING</h3><span>Source is {authUser.hospital_name}</span></div>{outgoingRequests.length ? <div className="fulfillment-request-list directional">{outgoingRequests.map((request) => <FulfillmentProgressCard key={`outgoing-${request.request_id}`} request={request} direction="outgoing" authUser={authUser} updateLeg={updateLeg} cancelRequest={cancelRequest} rematchRequest={rematchRequest} />)}</div> : <div className="fulfillment-direction-empty">No outgoing transfers.</div>}</section>
       </div>}
       {requestsError && !requests ? <Error message={requestsError} /> : requestsLoading && !requests ? <Loading /> : !requests?.length ? <div className="panel empty-state"><Truck size={20} /><strong>No supply requests yet</strong><span>New requests will appear here with each source leg, route, ETA, and committed quantity.</span></div> : null}
     </section>
@@ -528,7 +573,7 @@ function Transfers({ refresh, authUser }) {
   </>
 }
 
-function Priorities({ refresh }) { const { data, loading, error } = useApiData('/prioritisation', refresh); return <><Heading title="Critical prioritisation" description="Transparent allocation scoring across emergency demand, patient load, stock-out urgency, alternatives, and criticality." /><section className="score-method"><strong>Priority score weights</strong><div className="weight-chips"><span>Emergency demand <b>35%</b></span><span>Patient load <b>25%</b></span><span>Stock-out urgency <b>20%</b></span><span>Alternative unavailable <b>10%</b></span><span>Supply criticality <b>10%</b></span></div></section><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Priority', (r) => <Badge value={r.priority} />], ['Hospital', (r) => <Cell r={r.hospital} sub={`${r.days_until_stockout} days cover`} />], ['Supply', (r) => <Cell r={r.supply} sub={`${r.criticality} criticality`} />], ['Score', (r) => <Score value={r.priority_score} />], ['Probability', (r) => `${Math.round(r.shortage_probability * 100)}%`], ['Decision factors', (r) => r.reasons.join(' · ')]]} /></section><p className="method-disclaimer">Scores support operational review; they are not clinical triage.</p></> }
+function Priorities({ refresh }) { const { data, loading, error } = useApiData('/prioritisation', refresh); return <><Heading title="Critical prioritisation" description="Transparent allocation scoring across emergency demand, patient load, stock-out urgency, alternatives, and criticality." /><section className="score-method"><strong>Priority score weights</strong><div className="weight-chips"><span>Emergency demand <b>35%</b></span><span>Patient load <b>25%</b></span><span>Stock-out urgency <b>20%</b></span><span>Alternative unavailable <b>10%</b></span><span>Supply criticality <b>10%</b></span></div></section><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Priority', (r) => <Badge value={r.priority} />], ['Hospital', (r) => <Cell r={r.hospital} sub={`${r.days_until_stockout} days cover`} />], ['Supply', (r) => <Cell r={r.supply} sub={`${r.criticality} criticality`} />], ['Score', (r) => <Score value={r.priority_score} />], ['Decision factors', (r) => r.reasons.join(' · ')]]} /></section><p className="method-disclaimer">Scores support operational review; they are not clinical triage.</p></> }
 
 function Hospitals({ refresh }) { const { data, loading, error } = useApiData('/hospitals', refresh); return <><Heading title="Hospital network" description="Facility supply health across the synthetic demo network." /><section className="panel data-panel"><Table loading={loading} error={error} rows={data || []} columns={[['Facility', (r) => <Cell r={r.name} sub={`${r.city}, ${r.state}`} />], ['Beds', (r) => r.bed_capacity], ['Occupancy', (r) => `${Math.round(r.occupancy_rate * 100)}%`], ['Emergency load', (r) => `${Math.round(r.emergency_load * 100)}%`], ['Critical gaps', (r) => r.critical_shortages], ['Expiry flags', (r) => r.expiry_risk_count], ['Supply health', (r) => <Health score={r.supply_health_score} />]]} /></section></> }
 function Supplies({ refresh }) { const { data, loading, error } = useApiData('/supplies', refresh); const [search, setSearch] = useState(''); const rows = (data || []).filter((item) => `${item.name} ${item.category}`.toLowerCase().includes(search.toLowerCase())); return <><Heading title="Medical supplies" description="Catalogue-level stock, aggregate demand, and network exposure." /><section className="panel data-panel"><div className="table-toolbar"><div className="toolbar-search"><Search size={16} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search supply or category" /></div></div><Table loading={loading} error={error} rows={rows} columns={[['Supply', (r) => <Cell r={r.name} sub={r.category} />], ['Criticality', (r) => r.criticality], ['Total stock', (r) => r.total_stock.toLocaleString()], ['Daily demand', (r) => `${r.daily_demand.toLocaleString()}/d`], ['14-day forecast', (r) => r.forecast_demand.toLocaleString()], ['Hospitals at risk', (r) => r.shortage_hospitals], ['Expiry batches', (r) => r.expiry_batches], ['Risk', (r) => <Badge value={r.risk_level} />]]} /></section></> }
@@ -537,9 +582,32 @@ function Assistant() {
   const [messages, setMessages] = useState([{ role: 'assistant', text: 'I can query current shortage exposure, expiry risk, inventory totals, and recommended transfers. What would you like to know?' }])
   const [question, setQuestion] = useState('')
   const [busy, setBusy] = useState(false)
-  const prompts = ['Which supplies are at highest risk at my hospital?', 'Which local batches expire soon?', 'Why should H002 transfer saline to H001?', 'What happens if demand increases by 20%?']
-  async function ask(value = question) { const text = value.trim(); if (!text || busy) return; setMessages((items) => [...items, { role: 'user', text }]); setQuestion(''); setBusy(true); try { const result = await post('/assistant/query', { question: text }); setMessages((items) => [...items, { role: 'assistant', text: result.answer, sources: result.sources }]) } catch (error) { setMessages((items) => [...items, { role: 'assistant', text: getErrorMessage(error) }]) } finally { setBusy(false) } }
-  return <><Heading title="MediSupply Copilot" description="Natural-language answers grounded in current backend analysis." action={<span className="demo-ai-badge"><Sparkles size={14} />DEMO AI MODE</span>} /><section className="assistant-layout"><div className="panel chat-panel"><div className="chat-header"><div className="chat-avatar"><Sparkles size={18} /></div><div><strong>MediSupply Copilot</strong><span><i className="status-dot" />Connected to demo data</span></div><span className="mode-pill">RULE-BASED</span></div><div className="chat-messages">{messages.map((item, index) => <div className={`chat-message ${item.role}`} key={index}><div className="message-avatar">{item.role === 'assistant' ? <Sparkles size={15} /> : 'DR'}</div><div className="message-body"><p>{item.text}</p>{item.sources && <small>Data sources: {item.sources.map((source) => source.tool.replaceAll('_', ' ')).join(' · ')}</small>}</div></div>)}{busy && <div className="chat-thinking">Checking current supply signals...</div>}</div><form className="chat-compose" onSubmit={(event) => { event.preventDefault(); ask() }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about shortages, expiry, or transfers..." /><button disabled={!question.trim() || busy} aria-label="Send"><ArrowRight size={18} /></button></form><div className="chat-disclaimer">Synthetic demo data · Validate decisions with local teams</div></div><aside className="panel prompt-panel"><span className="eyebrow">SUGGESTED QUESTIONS</span><h2>Explore the network</h2>{prompts.map((prompt) => <button className="suggestion-button" key={prompt} onClick={() => ask(prompt)}>{prompt}<ArrowUpRight size={14} /></button>)}</aside></section></>
+  const [mode, setMode] = useState('RULE-BASED')
+  const prompts = ['Which supplies are at highest risk at my hospital?', 'Which local batches expire soon?', 'Why should H002 transfer saline to H001?', 'What happens if Normal Saline demand increases by 20% at my hospital?']
+  async function ask(value = question) {
+    const text = value.trim()
+    if (!text || busy) return
+    const history = messages.slice(-6).map(({ role, text: messageText }) => ({ role, text: messageText.slice(0, 100) }))
+    const payload = { question: text, history }
+    let serializedQuestion = JSON.stringify(payload)
+    while (serializedQuestion.length > 950 && payload.history.length) {
+      payload.history.shift()
+      serializedQuestion = JSON.stringify(payload)
+    }
+    setMessages((items) => [...items, { role: 'user', text }].slice(-6))
+    setQuestion('')
+    setBusy(true)
+    try {
+      const result = await post('/assistant/query', { question: serializedQuestion })
+      setMode(result.mode || 'RULE-BASED')
+      setMessages((items) => [...items, { role: 'assistant', text: result.answer, sources: result.sources }].slice(-6))
+    } catch (error) {
+      setMessages((items) => [...items, { role: 'assistant', text: getErrorMessage(error) }].slice(-6))
+    } finally {
+      setBusy(false)
+    }
+  }
+  return <><Heading title="MediSupply Copilot" description="Natural-language answers grounded in current backend analysis." action={<span className="demo-ai-badge"><Sparkles size={14} />{mode}</span>} /><section className="assistant-layout"><div className="panel chat-panel"><div className="chat-header"><div className="chat-avatar"><Sparkles size={18} /></div><div><strong>MediSupply Copilot</strong><span><i className="status-dot" />Connected to demo data</span></div><span className="mode-pill">{mode}</span></div><div className="chat-messages">{messages.map((item, index) => <div className={`chat-message ${item.role}`} key={index}><div className="message-avatar">{item.role === 'assistant' ? <Sparkles size={15} /> : 'DR'}</div><div className="message-body"><p>{item.text}</p>{item.sources && <small>Data sources: {item.sources.map((source) => source.tool.replaceAll('_', ' ')).join(' · ')}</small>}</div></div>)}{busy && <div className="chat-thinking">Checking current supply signals...</div>}</div><form className="chat-compose" onSubmit={(event) => { event.preventDefault(); ask() }}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask about shortages, expiry, or transfers..." /><button disabled={!question.trim() || busy} aria-label="Send"><ArrowRight size={18} /></button></form><div className="chat-disclaimer">Synthetic demo data · Validate decisions with local teams</div></div><aside className="panel prompt-panel"><span className="eyebrow">SUGGESTED QUESTIONS</span><h2>Explore the network</h2>{prompts.map((prompt) => <button className="suggestion-button" key={prompt} onClick={() => ask(prompt)}>{prompt}<ArrowUpRight size={14} /></button>)}</aside></section></>
 }
 
 function Reports({ refresh }) {

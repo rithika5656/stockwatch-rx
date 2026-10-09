@@ -2,10 +2,13 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
+import logging
+import threading
 from typing import Any
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from . import database, fulfillment
@@ -17,13 +20,24 @@ from .engine import SURGERY_TYPES
 from .routing import road_route
 
 app = FastAPI(title="MediSupplyIQ API", version="1.0.0", description="Synthetic medical supply decision-support prototype")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+_logger = logging.getLogger(__name__)
+_CORS_ORIGINS = [
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in range(5173, 5181)
+]
+
+
+@app.middleware("http")
+async def catch_all_error_middleware(request: Any, call_next: Any) -> Any:
+    try:
+        return await call_next(request)
+    except Exception as error:
+        _logger.exception("Unhandled API request error")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": {"message": str(error) or "Internal server error"}},
+        )
 
 SCENARIOS = {
     "normal": "Normal operations",
@@ -37,6 +51,7 @@ scenario_key = "outbreak"
 action_status: dict[str, str] = {}
 _cached_data_id: int | None = None
 _cached_analysis: dict[str, Any] | None = None
+_analysis_lock = threading.RLock()
 
 
 class LoginRequest(BaseModel):
@@ -81,6 +96,8 @@ class ShareablePoolPayload(BaseModel):
 class SupplyRequestPayload(BaseModel):
     supply_id: str
     requested_quantity: int = Field(ge=1, le=1_000_000)
+    urgency_level: str = Field(default="NORMAL")
+    delivery_deadline: date | None = None
 
 
 class FulfillmentFailurePayload(BaseModel):
@@ -110,18 +127,23 @@ def envelope(data: Any, **meta: Any) -> dict[str, Any]:
 
 def get_analysis() -> dict[str, Any]:
     global _cached_data_id, _cached_analysis
-    if _cached_data_id != id(database.ACTIVE_DATA) or _cached_analysis is None:
-        _cached_analysis = analyze(database.ACTIVE_DATA)
-        _cached_data_id = id(database.ACTIVE_DATA)
-    return _cached_analysis
+    with _analysis_lock:
+        version = int(database.ACTIVE_DATA.get("_version", 0))
+        if _cached_data_id != id(database.ACTIVE_DATA) or _cached_analysis is None or _cached_analysis.get("_version") != version:
+            _cached_analysis = analyze(database.ACTIVE_DATA)
+            _cached_data_id = id(database.ACTIVE_DATA)
+            _cached_analysis["_version"] = version
+        return _cached_analysis
 
 
 def refresh_analysis() -> dict[str, Any]:
     global _cached_data_id, _cached_analysis
-    _cached_analysis = analyze(database.ACTIVE_DATA)
-    _cached_data_id = id(database.ACTIVE_DATA)
-    database.persist_analysis(_cached_analysis)
-    return _cached_analysis
+    with _analysis_lock:
+        _cached_analysis = analyze(database.ACTIVE_DATA)
+        _cached_data_id = id(database.ACTIVE_DATA)
+        _cached_analysis["_version"] = int(database.ACTIVE_DATA.get("_version", 0))
+        database.persist_analysis(_cached_analysis)
+        return _cached_analysis
 
 
 def get_current_user(authorization: str | None = Header(default=None)) -> dict[str, Any]:
@@ -253,13 +275,18 @@ def _forecast_series(forecast_row: dict[str, Any], hospital_id: str, supply_id: 
         day = (date.fromisoformat(surgery["scheduled_date"]) - date.today()).days + 1
         if 1 <= day <= horizon_days:
             scheduled_by_day[day] += _surgery_requirements(surgery).get(supply_id, 0.0)
-    baseline = forecast_row["baseline_forecast_daily_demand"]
+    baseline = max(0.1, forecast_row["forecast_daily_demand"] - forecast_row["surgery_additional_demand"])
     trend = forecast_row["trend_percent"] / 100
-    return [{
-        "day": day,
-        "demand": round(baseline * (1 + max(-0.01, trend * 0.025) * day) + scheduled_by_day.get(day, 0.0), 1),
-        "surgery_demand": round(scheduled_by_day.get(day, 0.0), 1),
-    } for day in range(1, horizon_days + 1)]
+    points = []
+    for day in range(1, horizon_days + 1):
+        daily_base = baseline * (1 + max(-0.01, trend * 0.025) * day)
+        daily_surgery = scheduled_by_day.get(day, 0.0)
+        points.append({
+            "day": day,
+            "demand": round(max(0.1, daily_base + daily_surgery), 1),
+            "surgery_demand": round(daily_surgery, 1),
+        })
+    return points
 
 
 def _route_for_ids(source_hospital_id: str, destination_hospital_id: str) -> dict[str, Any]:
@@ -338,6 +365,7 @@ def startup() -> None:
     database.initialize_database()
     _cached_analysis = analyze(database.ACTIVE_DATA)
     _cached_data_id = id(database.ACTIVE_DATA)
+    _cached_analysis["_version"] = int(database.ACTIVE_DATA.get("_version", 0))
     database.persist_analysis(_cached_analysis)
 
 
@@ -386,9 +414,40 @@ def change_scenario(payload: ScenarioChange) -> dict[str, Any]:
     database.set_scenario(key)
     _cached_analysis = analyze(database.ACTIVE_DATA)
     _cached_data_id = id(database.ACTIVE_DATA)
+    _cached_analysis["_version"] = int(database.ACTIVE_DATA.get("_version", 0))
     database.persist_analysis(_cached_analysis)
     action_status.clear()
     return envelope(_scenario_response())
+
+
+@app.post("/api/demo/multi-source-fulfillment")
+def run_multi_source_fulfillment_demo(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    global scenario_key, _cached_data_id, _cached_analysis
+    if user.get("role") != "network_admin" and user["hospital_id"] != "H002":
+        raise HTTPException(status_code=403, detail="The multi-source demonstration request must be created by PSG Hospitals")
+    active_requests = [row for row in database.ACTIVE_DATA.get("supply_requests", [])
+                       if row.get("status") not in ("FULFILLED", "CANCELLED")]
+    if active_requests:
+        raise HTTPException(status_code=409, detail="Complete or cancel active supply requests before resetting the synthetic demonstration scenario")
+    scenario_key = "kmch_to_psg"
+    database.set_scenario(scenario_key)
+    kumaran_pool = next((row for row in database.ACTIVE_DATA["shareable_pool"]
+                         if row["hospital_id"] == "H003" and row["supply_id"] == "MED001"), None)
+    if kumaran_pool is None:
+        raise HTTPException(status_code=500, detail="The synthetic demonstration source pool is unavailable")
+    kumaran_pool.update({"shareable_quantity": 250, "enabled": True, "committed_quantity": 0})
+    _cached_analysis = analyze(database.ACTIVE_DATA)
+    _cached_data_id = id(database.ACTIVE_DATA)
+    _cached_analysis["_version"] = int(database.ACTIVE_DATA.get("_version", 0))
+    database.persist_analysis(_cached_analysis)
+    request = fulfillment.create_request("H002", "MED001", 600)
+    first_offer = next((leg for leg in request["legs"] if leg["status"] == "OFFERED"), None)
+    return envelope({
+        "request": request,
+        "scenario": _scenario_response(),
+        "prototype_notice": "Synthetic dispatch methodology only. No courier service or live tracking is connected.",
+        "demo_ready": bool(first_offer and first_offer["source_hospital_id"] == "H001" and first_offer["allocated_quantity"] == 400),
+    })
 
 
 @app.get("/api/surgery-types")
@@ -676,7 +735,8 @@ def request_transfer(recommendation_id: str, user: dict[str, Any] = Depends(get_
     if not safe["transfer_feasible"]:
         raise HTTPException(status_code=422, detail="Transfer request requires an available route and on-time ETA")
     try:
-        request = fulfillment.create_request(user["hospital_id"], item["supply_id"], item["destination_need"])
+        request = fulfillment.create_request(user["hospital_id"], item["supply_id"], item["destination_need"], auto_match=False)
+        threading.Thread(target=fulfillment.match_request_in_background, args=(request["request_id"],), daemon=True).start()
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     action_status[recommendation_id] = "requested"
@@ -698,7 +758,19 @@ def list_supply_requests(user: dict[str, Any] = Depends(get_current_user)) -> di
 @app.post("/api/supply-requests")
 def create_supply_request(payload: SupplyRequestPayload, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
     try:
-        request = fulfillment.create_request(user["hospital_id"], payload.supply_id, payload.requested_quantity)
+        request = fulfillment.create_request(
+            user["hospital_id"],
+            payload.supply_id,
+            payload.requested_quantity,
+            urgency_level=payload.urgency_level,
+            delivery_deadline=payload.delivery_deadline,
+            auto_match=False,
+        )
+        threading.Thread(
+            target=fulfillment.match_request_in_background,
+            args=(request["request_id"],),
+            daemon=True,
+        ).start()
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
     return envelope(request)
@@ -712,6 +784,15 @@ def cancel_supply_request(request_id: str, user: dict[str, Any] = Depends(get_cu
         raise HTTPException(status_code=403, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error
+    return envelope(request)
+
+
+@app.post("/api/supply-requests/{request_id}/rematch")
+def rematch_supply_request(request_id: str, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    try:
+        request = fulfillment.rematch_request(request_id, user["hospital_id"])
+    except ValueError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
     return envelope(request)
 
 
@@ -745,7 +826,7 @@ def update_fulfillment_leg(request_id: str, leg_id: str, payload: FulfillmentSta
         raise HTTPException(status_code=403, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=409, detail=str(error)) from error
-    if payload.status.upper() in ("IN_TRANSIT", "DELIVERED"):
+    if payload.status.upper() in ("PICKED_UP", "IN_TRANSIT", "ARRIVED", "DELIVERED"):
         refresh_analysis()
     return envelope(request)
 
@@ -776,6 +857,30 @@ def weekly_management_report(start_date: date | None = None, end_date: date | No
                  and start <= date.fromisoformat(row["scheduled_date"]) <= end]
     transfers = [_public_transfer(row, hospital_id) for row in analysis["transfers"]
                  if row["destination_hospital_id"] == hospital_id or row["source_hospital_id"] == hospital_id]
+    fulfillment_requests = [
+        row for row in fulfillment.list_visible_requests(hospital_id)
+        if start <= datetime.fromisoformat(row["created_at"]).astimezone().date() <= end
+    ]
+    matching_seconds = []
+    eta_minutes = []
+    for request in fulfillment_requests:
+        offered_at = [datetime.fromisoformat(leg["created_at"]) for leg in request["legs"] if leg.get("created_at")]
+        if offered_at:
+            matching_seconds.append(max(0.0, (min(offered_at) - datetime.fromisoformat(request["created_at"])).total_seconds()))
+        eta_minutes.extend(float(leg["estimated_eta_minutes"]) for leg in request["legs"] if leg.get("estimated_eta_minutes") is not None)
+    fulfillment_metrics = {
+        "requests": len(fulfillment_requests),
+        "total_requested_units": sum(int(row["requested_quantity"]) for row in fulfillment_requests),
+        "total_fulfilled_units": sum(int(row.get("fulfilled_quantity", 0)) for row in fulfillment_requests),
+        "partially_fulfilled_requests": sum(row["status"] in ("PARTIALLY_FULFILLED", "PARTIALLY_DELIVERED") for row in fulfillment_requests),
+        "fully_fulfilled_requests": sum(row["status"] == "FULFILLED" for row in fulfillment_requests),
+        "average_matching_time_seconds": round(sum(matching_seconds) / len(matching_seconds), 1) if matching_seconds else None,
+        "average_transfer_eta_minutes": round(sum(eta_minutes) / len(eta_minutes), 1) if eta_minutes else None,
+        "rematches": sum(int(row.get("rematch_count", 0)) for row in fulfillment_requests),
+        "rejected_offers": sum(int(row.get("rejected_offers_count", 0)) for row in fulfillment_requests),
+        "failed_transfers": sum(int(row.get("failed_transfers_count", 0)) for row in fulfillment_requests),
+        "multi_source_fulfillment_count": sum(len({leg["source_hospital_id"] for leg in row["legs"] if leg["status"] not in ("REJECTED", "EXPIRED", "CANCELLED")}) > 1 for row in fulfillment_requests),
+    }
     forecast_index = {(row["hospital_id"], row["supply_id"]): row for row in analysis["forecasts"]}
     surgery_rows = []
     for surgery in schedules:
@@ -815,8 +920,10 @@ def weekly_management_report(start_date: date | None = None, end_date: date | No
             "expiry_risks": len(expiries), "transfers_recommended": len(transfers),
             "transfers_completed": sum(row["status"] == "approved" for row in transfers),
             "upcoming_surgery_cases": sum(row["number_of_cases"] for row in schedules),
+            "fulfillment": fulfillment_metrics,
         },
-        "shortages": shortages, "surgeries": surgery_rows, "transfers": transfers, "expiry_risks": expiries,
+        "shortages": shortages, "surgeries": surgery_rows, "transfers": transfers,
+        "expiry_risks": expiries, "fulfillment_requests": fulfillment_requests,
         "management_actions": actions,
         "disclaimer": "Prototype demonstration: hospital locations are based on publicly available information. Inventory, demand, surgery schedules and transfer data are simulated and do not represent live hospital operational data.",
     })
@@ -921,7 +1028,7 @@ def network_summary(user: dict[str, Any] = Depends(get_current_user)) -> dict[st
     } for item in analysis["transfers"] if user.get("role") == "network_admin" or item["destination_hospital_id"] == user["hospital_id"] or (item["source_hospital_id"] == user["hospital_id"] and any(pool["hospital_id"] == user["hospital_id"] and pool["supply_id"] == item["supply_id"] and pool.get("enabled") for pool in database.ACTIVE_DATA.get("shareable_pool", [])))][:20]
     for request in fulfillment.list_visible_requests(hospital_id):
         for leg in request["legs"]:
-            if leg["status"] not in ("OFFERED", "COMMITTED", "IN_TRANSIT", "RECEIVING", "DELIVERED"):
+            if leg["status"] not in ("OFFERED", "COMMITTED", "PICKED_UP", "IN_TRANSIT", "ARRIVED", "RECEIVING", "DELIVERED"):
                 continue
             edges.append({
                 "recommendation_id": f"FUL-{leg['leg_id']}", "fulfillment_leg_id": leg["leg_id"],
@@ -989,6 +1096,15 @@ def supplies(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]
         risks = [item for item in related if item["risk_level"] in ("CRITICAL", "HIGH")]
         expiries = [item for item in analysis["expiry_risks"] if item["supply_id"] == supply_id]
         rows.append({**supply, "total_stock": sum(item["current_stock"] for item in related), "daily_demand": round(sum(item["forecast_daily_demand"] for item in related), 1), "forecast_demand": round(sum(item["forecast_daily_demand"] for item in related) * 14), "shortage_hospitals": len(risks), "expiry_batches": len(expiries), "hospitals_holding": len(related), "risk_level": max((item["risk_level"] for item in related), key=lambda value: RISK_ORDER[value])})
+    return envelope(rows, count=len(rows))
+
+
+@app.get("/api/supply-catalogue")
+def supply_catalogue(user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
+    rows = [
+        {"supply_id": row["supply_id"], "name": row["name"]}
+        for row in database.ACTIVE_DATA.get("supplies", [])
+    ]
     return envelope(rows, count=len(rows))
 
 
@@ -1137,13 +1253,33 @@ def run_analysis() -> dict[str, Any]:
 
 @app.post("/api/assistant/query")
 def assistant_query(payload: AssistantQuery, user: dict[str, Any] = Depends(get_current_user)) -> dict[str, Any]:
-    provider = get_assistant_provider()
-    analysis = scoped_analysis(user)
-    analysis["transfers"] = [_public_transfer(item, user["hospital_id"]) for item in analysis["transfers"]]
-    return envelope(provider.answer(payload.question, analysis))
+    try:
+        provider = get_assistant_provider()
+        analysis = dict(scoped_analysis(user))
+        analysis["transfers"] = [_public_transfer(item, user["hospital_id"]) for item in analysis["transfers"]]
+        analysis["visible_supply_requests"] = fulfillment.list_visible_requests(user["hospital_id"])
+        return envelope(provider.answer(payload.question, analysis))
+    except Exception:
+        _logger.exception("MediSupply Copilot failed for %s", user.get("hospital_id", "unknown hospital"))
+        return envelope({
+            "answer": "I could not answer that",
+            "sources": [],
+            "mode": "RULE-BASED",
+            "disclaimer": "Synthetic demo data; verify operational decisions with local teams.",
+        })
 
 
-@app.exception_handler(Exception)
-async def unexpected_error_handler(_request: Any, error: Exception) -> Any:
-    from fastapi.responses import JSONResponse
-    return JSONResponse(status_code=500, content={"data": None, "error": {"message": str(error)}, "meta": {"source": database.DATA_SOURCE}})
+class _OutermostCORSMiddleware(CORSMiddleware):
+    def __getattr__(self, name: str) -> Any:
+        inner_app = object.__getattribute__(self, "app")
+        return getattr(inner_app, name)
+
+
+_fastapi_app = app
+app = _OutermostCORSMiddleware(
+    _fastapi_app,
+    allow_origins=_CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

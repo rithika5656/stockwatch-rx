@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import secrets
 import threading
+import os
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
@@ -11,11 +12,33 @@ from .routing import road_route
 
 
 _lock = threading.RLock()
-_FULFILLED_STATUSES = {"COMMITTED", "DISPATCHING", "IN_TRANSIT", "RECEIVING", "DELIVERED"}
+OFFER_TIMEOUT_SECONDS = max(1, int(os.getenv("FULFILLMENT_OFFER_TIMEOUT_SECONDS", "30")))
+_ALLOCATED_STATUSES = {
+    "COMMITTED", "DISPATCHING", "PICKUP_PENDING", "PICKED_UP",
+    "IN_TRANSIT", "ARRIVED", "RECEIVING", "DELIVERED",
+}
+_IN_TRANSIT_STATUSES = {"IN_TRANSIT", "ARRIVED", "RECEIVING"}
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _record_event(request: dict[str, Any], event: str, message: str,
+                  leg: dict[str, Any] | None = None) -> None:
+    occurred_at = _now()
+    entry = {"event_id": f"EVT-{secrets.token_hex(4).upper()}", "event": event,
+             "message": message, "occurred_at": occurred_at}
+    if leg:
+        entry.update({
+            "leg_id": leg["leg_id"],
+            "source_hospital_id": leg["source_hospital_id"],
+            "destination_hospital_id": leg["destination_hospital_id"],
+            "quantity": int(leg["allocated_quantity"]),
+        })
+    request.setdefault("timeline", []).append(entry)
+    request["updated_at"] = occurred_at
+    database.save_workflow_record("supply_requests", request)
 
 
 def _requests() -> list[dict[str, Any]]:
@@ -38,22 +61,68 @@ def _request_legs(request_id: str) -> list[dict[str, Any]]:
     return [item for item in _legs() if item["request_id"] == request_id]
 
 
+def _expire_offers(request: dict[str, Any]) -> bool:
+    now = datetime.now(timezone.utc)
+    expired = False
+    for leg in _request_legs(request["request_id"]):
+        if leg["status"] != "OFFERED":
+            continue
+        created_at = datetime.fromisoformat(leg["created_at"])
+        if (now - created_at).total_seconds() < OFFER_TIMEOUT_SECONDS:
+            continue
+        leg["status"] = "EXPIRED"
+        leg["lifecycle_status"] = "EXPIRED"
+        leg["failure_reason"] = "Source did not respond. Searching for another supplier."
+        leg["expired_at"] = _now()
+        request["expired_offers_count"] = int(request.get("expired_offers_count", 0)) + 1
+        database.save_workflow_record("fulfillment_legs", leg)
+        _record_event(request, "OFFER_EXPIRED", leg["failure_reason"], leg)
+        expired = True
+    if expired:
+        database.save_workflow_record("supply_requests", request)
+    return expired
+
+
 def _fulfilled_quantity(request_id: str) -> int:
     return sum(int(item["allocated_quantity"]) for item in _request_legs(request_id)
-               if item["status"] in _FULFILLED_STATUSES)
+               if item["status"] == "DELIVERED")
+
+
+def _allocated_quantity(request_id: str) -> int:
+    return sum(int(item["allocated_quantity"]) for item in _request_legs(request_id)
+               if item["status"] in _ALLOCATED_STATUSES)
+
+
+def _in_transit_quantity(request_id: str) -> int:
+    return sum(int(item["allocated_quantity"]) for item in _request_legs(request_id)
+               if item["status"] in _IN_TRANSIT_STATUSES)
 
 
 def _refresh_request(request: dict[str, Any], matching_status: str | None = None) -> None:
-    fulfilled = min(int(request["requested_quantity"]), _fulfilled_quantity(request["request_id"]))
+    requested = int(request["requested_quantity"])
+    fulfilled = min(requested, _fulfilled_quantity(request["request_id"]))
+    allocated = min(requested, _allocated_quantity(request["request_id"]))
+    in_transit = min(allocated - fulfilled, _in_transit_quantity(request["request_id"]))
     request["fulfilled_quantity"] = fulfilled
-    request["remaining_quantity"] = max(0, int(request["requested_quantity"]) - fulfilled)
-    if request["remaining_quantity"] == 0:
-        request["status"] = "FULLY_FULFILLED"
+    request["allocated_quantity"] = allocated
+    request["in_transit_quantity"] = in_transit
+    request["remaining_quantity"] = max(0, requested - allocated)
+    if fulfilled >= requested:
+        request["status"] = "FULFILLED"
+        request["matching_status"] = "COMPLETE"
+    elif request["remaining_quantity"] == 0 and fulfilled > 0:
+        request["status"] = "PARTIALLY_DELIVERED"
+        request["matching_status"] = "COMPLETE"
+    elif request["remaining_quantity"] == 0 and in_transit:
+        request["status"] = "IN_TRANSIT"
+        request["matching_status"] = "COMPLETE"
+    elif request["remaining_quantity"] == 0:
+        request["status"] = "FULLY_ALLOCATED"
         request["matching_status"] = "COMPLETE"
     elif matching_status == "NO_SOURCE_AVAILABLE":
-        request["status"] = "NO_SOURCE_AVAILABLE"
+        request["status"] = "PARTIALLY_FULFILLED" if allocated else "NO_SOURCE_AVAILABLE"
         request["matching_status"] = matching_status
-    elif fulfilled:
+    elif allocated or fulfilled:
         request["status"] = "PARTIALLY_FULFILLED"
         request["matching_status"] = matching_status or "SEARCHING"
     else:
@@ -152,23 +221,46 @@ def _candidate_capacity(request: dict[str, Any], source_id: str, analysis: dict[
 
 def _match_next(request: dict[str, Any]) -> dict[str, Any] | None:
     _refresh_request(request)
-    if request["remaining_quantity"] <= 0 or request["status"] == "CANCELLED":
+    if request["status"] == "CANCELLED":
         return None
+    if request["remaining_quantity"] <= 0:
+        for offer in _request_legs(request["request_id"]):
+            if offer["status"] == "OFFERED":
+                offer["status"] = "CANCELLED"
+                offer["lifecycle_status"] = "WITHDRAWN"
+                offer["failure_reason"] = "Request need is fully allocated; unused offer withdrawn."
+                offer["cancelled_at"] = _now()
+                database.save_workflow_record("fulfillment_legs", offer)
+                _record_event(request, "OFFER_WITHDRAWN", offer["failure_reason"], offer)
+        return None
+    _expire_offers(request)
+    attempts = int(request.get("matching_attempts", 0))
+    if attempts:
+        request["rematch_count"] = int(request.get("rematch_count", 0)) + 1
+        _record_event(request, "REMATCHING", f"Searching sources for the remaining {request['remaining_quantity']} units.")
+    else:
+        _record_event(request, "MATCHING", "Searching nearby eligible sources.")
+    request["matching_attempts"] = attempts + 1
+    request["matching_status"] = "MATCHING"
+    request["last_matching_at"] = _now()
+    database.save_workflow_record("supply_requests", request)
     analysis = analyze(database.ACTIVE_DATA)
     open_offers = [leg for leg in _request_legs(request["request_id"]) if leg["status"] == "OFFERED"]
     for leg in open_offers:
         candidate = _candidate_capacity(request, leg["source_hospital_id"], analysis, set())
         if candidate:
+            previous_quantity = int(leg["allocated_quantity"])
             leg["allocated_quantity"] = candidate["quantity"]
             leg["source_batch_allocations"] = candidate["allocations"]
             leg["route_distance_km"] = candidate["route"]["distance_km"]
             leg["estimated_eta_minutes"] = candidate["route"]["duration_minutes"]
             leg["route"] = candidate["route"]["coordinates"]
             database.save_workflow_record("fulfillment_legs", leg)
-            request["matching_status"] = "OFFERED"
-            _refresh_request(request, "OFFERED")
-            return leg
+            if previous_quantity != candidate["quantity"]:
+                _record_event(request, "OFFER_UPDATED", f"{leg['source_hospital']} offer adjusted to {candidate['quantity']} units for the remaining need.", leg)
+            continue
         leg["status"] = "REJECTED"
+        leg["lifecycle_status"] = "WITHDRAWN"
         leg["failure_reason"] = "Current stock, route, expiry, or opt-in eligibility changed while this offer was open."
         database.save_workflow_record("fulfillment_legs", leg)
     used_sources = {row["source_hospital_id"] for row in _request_legs(request["request_id"])}
@@ -179,32 +271,39 @@ def _match_next(request: dict[str, Any]) -> dict[str, Any] | None:
             candidates.append(candidate)
     candidates.sort(key=lambda item: (item["score"], item["quantity"], -item["route"]["duration_minutes"]), reverse=True)
     if not candidates:
+        if any(row["status"] == "OFFERED" for row in _request_legs(request["request_id"])):
+            request["matching_status"] = "OFFERED"
+            _refresh_request(request, "OFFERED")
+            return next(row for row in _request_legs(request["request_id"]) if row["status"] == "OFFERED")
         _refresh_request(request, "NO_SOURCE_AVAILABLE")
         return None
 
-    selected = candidates[0]
-    source = selected["source"]
-    route = selected["route"]
-    leg = {
-        "leg_id": f"LEG-{secrets.token_hex(6).upper()}",
-        "request_id": request["request_id"],
-        "source_hospital_id": source["hospital_id"],
-        "source_hospital": source["display_name"],
-        "destination_hospital_id": request["destination_hospital_id"],
-        "destination_hospital": request["destination_hospital"],
-        "supply_id": request["supply_id"], "supply": request["supply"],
-        "allocated_quantity": selected["quantity"], "status": "OFFERED",
-        "route_distance_km": route["distance_km"], "estimated_eta_minutes": route["duration_minutes"],
-        "route": route["coordinates"], "route_provider": route["provider"],
-        "source_batch_allocations": selected["allocations"],
-        "created_at": _now(), "accepted_at": None, "picked_up_at": None,
-        "in_transit_at": None, "delivered_at": None,
-    }
-    _legs().append(leg)
-    database.save_workflow_record("fulfillment_legs", leg)
+    created_offers = []
+    for selected in candidates:
+        source = selected["source"]
+        route = selected["route"]
+        leg = {
+            "leg_id": f"LEG-{secrets.token_hex(6).upper()}",
+            "request_id": request["request_id"],
+            "source_hospital_id": source["hospital_id"],
+            "source_hospital": source["display_name"],
+            "destination_hospital_id": request["destination_hospital_id"],
+            "destination_hospital": request["destination_hospital"],
+            "supply_id": request["supply_id"], "supply": request["supply"],
+            "allocated_quantity": selected["quantity"], "status": "OFFERED",
+            "route_distance_km": route["distance_km"], "estimated_eta_minutes": route["duration_minutes"],
+            "route": route["coordinates"], "route_provider": route["provider"],
+            "source_batch_allocations": selected["allocations"],
+            "created_at": _now(), "accepted_at": None, "picked_up_at": None,
+            "in_transit_at": None, "delivered_at": None,
+        }
+        _legs().append(leg)
+        database.save_workflow_record("fulfillment_legs", leg)
+        _record_event(request, "OFFERED", f"{source['display_name']} can offer up to {selected['quantity']} units.", leg)
+        created_offers.append(leg)
     request["matching_status"] = "OFFERED"
     _refresh_request(request, "OFFERED")
-    return leg
+    return created_offers[0] if created_offers else None
 
 
 def _view(request: dict[str, Any]) -> dict[str, Any]:
@@ -229,7 +328,8 @@ def _view(request: dict[str, Any]) -> dict[str, Any]:
 
 def _fail_leg_locked(request: dict[str, Any], leg: dict[str, Any], reason: str,
                      consumed_allocations: list[dict[str, Any]] | None = None) -> None:
-    if leg["status"] in ("COMMITTED", "DISPATCHING"):
+    previous_status = leg["status"]
+    if previous_status in ("COMMITTED", "PICKED_UP", "DISPATCHING"):
         consumed_by_batch = {row["batch_id"]: int(row["quantity"]) for row in consumed_allocations or []}
         consumed_quantity = sum(consumed_by_batch.values())
         unconsumed_quantity = max(0, int(leg["allocated_quantity"]) - consumed_quantity)
@@ -242,22 +342,41 @@ def _fail_leg_locked(request: dict[str, Any], leg: dict[str, Any], reason: str,
             if unconsumed > 0:
                 database.release_batch_quantity(allocation["batch_id"], unconsumed)
     leg["status"] = "CANCELLED"
+    leg["lifecycle_status"] = "FAILED"
     leg["failure_reason"] = reason
     leg["cancelled_at"] = _now()
+    leg["failed_at"] = leg["cancelled_at"]
+    leg["failure_inventory_disposition"] = "released_to_source" if previous_status in ("COMMITTED", "PICKED_UP", "DISPATCHING") else "lost_or_in_transit"
+    request["failed_transfers_count"] = int(request.get("failed_transfers_count", 0)) + 1
     database.save_workflow_record("fulfillment_legs", leg)
+    _record_event(request, "FAILED", f"{reason} Remaining need is {request['remaining_quantity']} units.", leg)
     _refresh_request(request)
     _match_next(request)
 
 
-def create_request(destination_id: str, supply_id: str, requested_quantity: int) -> dict[str, Any]:
+def create_request(destination_id: str, supply_id: str, requested_quantity: int,
+                  urgency_level: str = "NORMAL", delivery_deadline: date | str | None = None,
+                  auto_match: bool = True) -> dict[str, Any]:
     with _lock:
-        analysis = analyze(database.ACTIVE_DATA)
-        destination = analysis["hospitals"].get(destination_id)
-        supply = analysis["supplies"].get(supply_id)
+        destination = next((row for row in database.ACTIVE_DATA.get("hospitals", []) if row["hospital_id"] == destination_id), None)
+        supply = next((row for row in database.ACTIVE_DATA.get("supplies", []) if row["supply_id"] == supply_id), None)
         if not destination or not supply:
             raise ValueError("Destination hospital or supply was not found")
         if requested_quantity < 1:
             raise ValueError("Requested quantity must be at least one unit")
+        normalized_urgency = (urgency_level or "NORMAL").upper()
+        allowed_urgency = {"NORMAL", "LOW", "MEDIUM", "URGENT", "CRITICAL"}
+        if normalized_urgency not in allowed_urgency:
+            raise ValueError("Urgency level must be NORMAL, LOW, MEDIUM, URGENT, or CRITICAL")
+        normalized_deadline = None
+        if delivery_deadline is not None:
+            if isinstance(delivery_deadline, date) and not isinstance(delivery_deadline, datetime):
+                normalized_deadline = delivery_deadline.isoformat()
+            else:
+                try:
+                    normalized_deadline = date.fromisoformat(str(delivery_deadline)).isoformat()
+                except ValueError as error:
+                    raise ValueError("Delivery deadline must be a valid ISO date") from error
         request = {
             "request_id": f"SWRX-{secrets.token_hex(4).upper()}",
             "created_by_hospital_id": destination_id,
@@ -265,19 +384,38 @@ def create_request(destination_id: str, supply_id: str, requested_quantity: int)
             "destination_hospital": destination["display_name"],
             "supply_id": supply_id, "supply": supply["name"],
             "requested_quantity": int(requested_quantity), "fulfilled_quantity": 0,
+            "allocated_quantity": 0, "in_transit_quantity": 0,
             "remaining_quantity": int(requested_quantity), "status": "SEARCHING",
-            "matching_status": "SEARCHING", "created_at": _now(), "updated_at": _now(),
+            "matching_status": "SEARCHING", "matching_attempts": 0,
+            "rematch_count": 0, "rejected_offers_count": 0,
+            "expired_offers_count": 0, "failed_transfers_count": 0,
+            "urgency_level": normalized_urgency,
+            "delivery_deadline": normalized_deadline,
+            "timeline": [],
+            "created_at": _now(), "updated_at": _now(),
         }
         _requests().append(request)
         database.save_workflow_record("supply_requests", request)
-        _match_next(request)
+        _record_event(request, "REQUESTED", f"{requested_quantity} units of {supply['name']} requested for {normalized_urgency} urgency.")
+        if auto_match:
+            _match_next(request)
         return _view(request)
+
+
+def match_request_in_background(request_id: str) -> None:
+    with _lock:
+        request = _request(request_id)
+        if request is not None:
+            _match_next(request)
 
 
 def list_visible_requests(hospital_id: str) -> list[dict[str, Any]]:
     with _lock:
         rows = []
         for request in _requests():
+            if _expire_offers(request):
+                _refresh_request(request)
+                _match_next(request)
             legs = _request_legs(request["request_id"])
             if request["destination_hospital_id"] == hospital_id or any(leg["source_hospital_id"] == hospital_id for leg in legs):
                 rows.append(_view(request))
@@ -297,6 +435,9 @@ def _find_leg_for_user(request_id: str, leg_id: str, hospital_id: str) -> tuple[
 def accept_leg(request_id: str, leg_id: str, hospital_id: str) -> dict[str, Any]:
     with _lock:
         request, leg = _find_leg_for_user(request_id, leg_id, hospital_id)
+        if _expire_offers(request):
+            _refresh_request(request)
+            _match_next(request)
         if leg["source_hospital_id"] != hospital_id:
             raise PermissionError("Only the source hospital can accept this offer")
         if leg["status"] != "OFFERED":
@@ -356,8 +497,11 @@ def accept_leg(request_id: str, leg_id: str, hospital_id: str) -> dict[str, Any]
             leg["allocated_quantity"] = quantity
             leg["source_batch_allocations"] = allocations
             leg["status"] = "COMMITTED"
+            leg["lifecycle_status"] = "PICKUP_PENDING"
             leg["accepted_at"] = _now()
+            leg["pickup_pending_at"] = _now()
             database.save_workflow_record("fulfillment_legs", leg)
+            _record_event(request, "ACCEPTED", f"{leg['source_hospital']} accepted {quantity} units; pickup is pending.", leg)
         except Exception:
             for allocation in reserved_batches:
                 database.release_batch_quantity(allocation["batch_id"], allocation["quantity"])
@@ -374,15 +518,33 @@ def accept_leg(request_id: str, leg_id: str, hospital_id: str) -> dict[str, Any]
 def reject_leg(request_id: str, leg_id: str, hospital_id: str) -> dict[str, Any]:
     with _lock:
         request, leg = _find_leg_for_user(request_id, leg_id, hospital_id)
+        if _expire_offers(request):
+            _refresh_request(request)
+            _match_next(request)
         if leg["source_hospital_id"] != hospital_id:
             raise PermissionError("Only the source hospital can reject this offer")
         if leg["status"] != "OFFERED":
             raise ValueError("Only an offered fulfillment leg can be rejected")
         leg["status"] = "REJECTED"
         leg["rejected_at"] = _now()
+        request["rejected_offers_count"] = int(request.get("rejected_offers_count", 0)) + 1
         database.save_workflow_record("fulfillment_legs", leg)
+        _record_event(request, "REJECTED", f"{leg['source_hospital']} declined the {leg['allocated_quantity']} unit offer.", leg)
         _refresh_request(request)
         _match_next(request)
+        return _view(request)
+
+
+def rematch_request(request_id: str, hospital_id: str) -> dict[str, Any]:
+    with _lock:
+        request = _request(request_id)
+        if not request or request["destination_hospital_id"] != hospital_id:
+            raise ValueError("Supply request was not found")
+        if request["status"] == "CANCELLED":
+            raise ValueError("A cancelled supply request cannot be matched")
+        _refresh_request(request)
+        if request["remaining_quantity"]:
+            _match_next(request)
         return _view(request)
 
 
@@ -469,9 +631,21 @@ def _receive_leg(request: dict[str, Any], leg: dict[str, Any]) -> None:
 def update_leg_status(request_id: str, leg_id: str, hospital_id: str, status: str) -> dict[str, Any]:
     with _lock:
         request, leg = _find_leg_for_user(request_id, leg_id, hospital_id)
-        if status == "IN_TRANSIT":
+        if status == "PICKED_UP":
             if leg["source_hospital_id"] != hospital_id or leg["status"] != "COMMITTED":
-                raise PermissionError("Only the source hospital can dispatch a committed leg")
+                raise PermissionError("Only the source hospital can confirm pickup of an accepted leg")
+            leg["status"] = "PICKED_UP"
+            leg["lifecycle_status"] = "PICKED_UP"
+            leg["picked_up_at"] = _now()
+            database.save_workflow_record("fulfillment_legs", leg)
+            _record_event(request, "PICKED_UP", f"{leg['source_hospital']} picked up {leg['allocated_quantity']} units.", leg)
+            _refresh_request(request)
+            if request["remaining_quantity"]:
+                _match_next(request)
+            return _view(request)
+        if status == "IN_TRANSIT":
+            if leg["source_hospital_id"] != hospital_id or leg["status"] not in ("COMMITTED", "PICKED_UP"):
+                raise PermissionError("Only the source hospital can dispatch an accepted or picked-up leg")
             if not database.claim_leg_dispatch(leg_id):
                 raise ValueError("This fulfillment leg is already being dispatched or is no longer committed")
             analysis = analyze(database.ACTIVE_DATA)
@@ -505,26 +679,40 @@ def update_leg_status(request_id: str, leg_id: str, hospital_id: str, status: st
                 consumed_allocations.append(allocation)
             database.release_shareable_quantity(leg["source_hospital_id"], leg["supply_id"], leg["allocated_quantity"], delivered=True)
             leg["status"] = "IN_TRANSIT"
-            leg["picked_up_at"] = _now()
+            leg["lifecycle_status"] = "IN_TRANSIT"
+            leg.setdefault("picked_up_at", _now())
             leg["in_transit_at"] = leg["picked_up_at"]
+            leg["dispatched_at"] = _now()
             leg["route_distance_km"] = route["distance_km"]
             leg["estimated_eta_minutes"] = route["duration_minutes"]
             leg["route"] = route["coordinates"]
-        elif status == "DELIVERED":
+            _record_event(request, "IN_TRANSIT", f"{leg['allocated_quantity']} units dispatched from {leg['source_hospital']} to {leg['destination_hospital']}.", leg)
+        elif status == "ARRIVED":
             if leg["destination_hospital_id"] != hospital_id or leg["status"] != "IN_TRANSIT":
-                raise PermissionError("Only the destination hospital can confirm an in-transit leg")
+                raise PermissionError("Only the destination hospital can confirm an in-transit leg has arrived")
+            leg["status"] = "ARRIVED"
+            leg["lifecycle_status"] = "ARRIVED"
+            leg["arrived_at"] = _now()
+            _record_event(request, "ARRIVED", f"{leg['allocated_quantity']} units arrived at {leg['destination_hospital']}.", leg)
+        elif status == "DELIVERED":
+            if leg["destination_hospital_id"] != hospital_id or leg["status"] not in ("IN_TRANSIT", "ARRIVED"):
+                raise PermissionError("Only the destination hospital can confirm an arrived or in-transit leg")
             _receive_leg(request, leg)
         else:
-            raise ValueError("Supported leg status updates are IN_TRANSIT and DELIVERED")
+            raise ValueError("Supported leg status updates are PICKED_UP, IN_TRANSIT, ARRIVED, and DELIVERED")
         database.save_workflow_record("fulfillment_legs", leg)
         _refresh_request(request)
+        if leg["status"] == "DELIVERED":
+            _record_event(request, "DELIVERED", f"{leg['allocated_quantity']} units received. Remaining need: {request['remaining_quantity']}.", leg)
+        if request["remaining_quantity"]:
+            _match_next(request)
         return _view(request)
 
 
 def fail_leg(request_id: str, leg_id: str, hospital_id: str, reason: str) -> dict[str, Any]:
     with _lock:
         request, leg = _find_leg_for_user(request_id, leg_id, hospital_id)
-        if leg["status"] not in ("COMMITTED", "IN_TRANSIT"):
-            raise ValueError("Only a committed or in-transit leg can be marked failed")
+        if leg["status"] not in ("COMMITTED", "PICKED_UP", "IN_TRANSIT", "ARRIVED"):
+            raise ValueError("Only an accepted, picked-up, in-transit, or arrived leg can be marked failed")
         _fail_leg_locked(request, leg, reason.strip() or "Source stock, batch, or route became unavailable.")
         return _view(request)

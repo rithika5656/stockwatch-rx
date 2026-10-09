@@ -375,7 +375,7 @@
 .what-if-panel { margin-bottom: 12px; padding: 14px 16px; }
 .what-if-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
 .what-if-heading h2 { margin: 0; color: #304a3e; font-size: 14px; }
-.what-if-controls { display: grid; grid-template-columns: minmax(150px,1.2fr) minmax(150px,1.2fr) minmax(110px,.7fr) minmax(110px,.7fr) auto auto; align-items: end; gap: 10px; }
+.what-if-controls { display: grid; grid-template-columns: minmax(150px,1.2fr) minmax(110px,.7fr) minmax(110px,.7fr) auto auto; align-items: end; gap: 10px; }
 .what-if-controls .filter-control { min-width: 0; }
 .what-if-controls input[type="number"] { width: 100%; min-height: 34px; padding: 0 9px; color: #42594f; border: 1px solid #e2e9e5; border-radius: 4px; background: white; font-size: 10px; }
 .what-if-result { display: flex; align-items: center; flex-wrap: wrap; gap: 9px; margin-top: 12px; padding: 10px; border: 1px solid #e4ece7; border-radius: 4px; background: #fafcfb; }

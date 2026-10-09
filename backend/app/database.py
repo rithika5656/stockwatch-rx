@@ -32,6 +32,7 @@ def initialize_database(force_seed: bool = False) -> dict[str, Any]:
             raise RuntimeError("MONGODB_URI is required when DEMO_MODE=false")
         ACTIVE_DATA.setdefault("supply_requests", [])
         ACTIVE_DATA.setdefault("fulfillment_legs", [])
+        ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
         return ACTIVE_DATA
 
     try:
@@ -64,6 +65,7 @@ def initialize_database(force_seed: bool = False) -> dict[str, Any]:
             ACTIVE_DATA[name] = list(database[name].find({}, {"_id": 0}))
         for pool in ACTIVE_DATA.get("shareable_pool", []):
             pool.setdefault("committed_quantity", 0)
+        ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
         MONGO_CLIENT, MONGO_DB = client, database
         DATA_SOURCE = f"MongoDB: {DATABASE_NAME}"
         return ACTIVE_DATA
@@ -91,6 +93,7 @@ def set_scenario(scenario: str) -> dict[str, Any]:
     updated["fulfillment_legs"] = ACTIVE_DATA.get("fulfillment_legs", [])
     ACTIVE_DATA = updated
     ACTIVE_SCENARIO = scenario
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     if MONGO_DB is not None:
         for name in SOURCE_COLLECTIONS:
             collection = MONGO_DB[name]
@@ -109,6 +112,7 @@ def save_source_record(collection_name: str, record: dict[str, Any], key: str) -
         records.append(record)
     else:
         records[existing] = record
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     if MONGO_DB is not None:
         MONGO_DB[collection_name].replace_one({key: record[key]}, record, upsert=True)
 
@@ -117,6 +121,7 @@ def remove_source_record(collection_name: str, value: str, key: str) -> None:
     if collection_name not in SOURCE_COLLECTIONS:
         raise ValueError(f"Unsupported source collection: {collection_name}")
     ACTIVE_DATA[collection_name] = [item for item in ACTIVE_DATA.get(collection_name, []) if item.get(key) != value]
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     if MONGO_DB is not None:
         MONGO_DB[collection_name].delete_one({key: value})
 
@@ -137,11 +142,11 @@ def save_workflow_record(collection_name: str, record: dict[str, Any]) -> None:
 
 def claim_leg_dispatch(leg_id: str) -> bool:
     leg = next((row for row in ACTIVE_DATA.get("fulfillment_legs", []) if row["leg_id"] == leg_id), None)
-    if leg is None or leg.get("status") != "COMMITTED":
+    if leg is None or leg.get("status") not in ("COMMITTED", "PICKED_UP"):
         return False
     if MONGO_DB is not None:
         updated = MONGO_DB["fulfillment_legs"].find_one_and_update(
-            {"leg_id": leg_id, "status": "COMMITTED"},
+            {"leg_id": leg_id, "status": leg.get("status")},
             {"$set": {"status": "DISPATCHING"}},
             return_document=ReturnDocument.AFTER,
         )
@@ -153,11 +158,11 @@ def claim_leg_dispatch(leg_id: str) -> bool:
 
 def claim_leg_receipt(leg_id: str) -> bool:
     leg = next((row for row in ACTIVE_DATA.get("fulfillment_legs", []) if row["leg_id"] == leg_id), None)
-    if leg is None or leg.get("status") != "IN_TRANSIT":
+    if leg is None or leg.get("status") not in ("IN_TRANSIT", "ARRIVED"):
         return False
     if MONGO_DB is not None:
         updated = MONGO_DB["fulfillment_legs"].find_one_and_update(
-            {"leg_id": leg_id, "status": "IN_TRANSIT"},
+            {"leg_id": leg_id, "status": leg.get("status")},
             {"$set": {"status": "RECEIVING"}},
             return_document=ReturnDocument.AFTER,
         )
@@ -204,8 +209,10 @@ def reserve_shareable_quantity(hospital_id: str, supply_id: str, quantity: int, 
         if updated is None:
             return False
         pool["committed_quantity"] = int(updated.get("committed_quantity", 0))
+        ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
         return True
     pool["committed_quantity"] = committed + quantity
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     return True
 
 
@@ -226,8 +233,10 @@ def reserve_batch_quantity(batch_id: str, quantity: int) -> bool:
         if updated is None:
             return False
         batch["committed_quantity"] = int(updated.get("committed_quantity", 0))
+        ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
         return True
     batch["committed_quantity"] = committed + quantity
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     return True
 
 
@@ -243,6 +252,7 @@ def release_batch_quantity(batch_id: str, quantity: int) -> None:
         if not result.modified_count:
             return
     batch["committed_quantity"] = max(0, int(batch.get("committed_quantity", 0)) - quantity)
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
 
 
 def consume_batch_quantity(batch_id: str, quantity: int) -> bool:
@@ -258,6 +268,7 @@ def consume_batch_quantity(batch_id: str, quantity: int) -> bool:
             return False
     batch["quantity"] -= quantity
     batch["committed_quantity"] = max(0, int(batch.get("committed_quantity", 0)) - quantity)
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
     return True
 
 
@@ -281,6 +292,7 @@ def release_shareable_quantity(hospital_id: str, supply_id: str, quantity: int, 
     pool["committed_quantity"] = max(0, int(pool.get("committed_quantity", 0)) - quantity)
     if delivered:
         pool["shareable_quantity"] = max(0, int(pool["shareable_quantity"]) - quantity)
+    ACTIVE_DATA["_version"] = int(ACTIVE_DATA.get("_version", 0)) + 1
 
 
 def persist_analysis(analysis: dict[str, Any]) -> None:
